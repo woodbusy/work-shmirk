@@ -17,6 +17,10 @@ fn tmux_bin() -> String {
     std::env::var("WORK_SHMIRK_TMUX_BIN").unwrap_or_else(|_| "tmux".to_string())
 }
 
+fn claude_bin() -> String {
+    std::env::var("WORK_SHMIRK_CLAUDE_BIN").unwrap_or_else(|_| "claude".to_string())
+}
+
 /// POSIX single-quote escape: surround in `'...'`, with each interior `'`
 /// rewritten as `'\''`.
 pub fn shell_single_quote(s: &str) -> String {
@@ -77,8 +81,10 @@ pub fn setup_panes(worktree_target: &Path, prompt: &str, window_name: &str) -> R
     run_tmux(&["split-window", "-v"])?;
 
     // Bottom-left pane is now active: launch claude with the prompt as a
-    // single arg, then exec $SHELL.
-    let bottom_payload = format!("cd {target_q} && claude {prompt_q} && exec $SHELL");
+    // single arg, then exec $SHELL. Honor WORK_SHMIRK_CLAUDE_BIN so the
+    // override propagates into the pane (single-quote escaped).
+    let claude_q = shell_single_quote(&claude_bin());
+    let bottom_payload = format!("cd {target_q} && {claude_q} {prompt_q} && exec $SHELL");
     run_tmux(&["send-keys", &bottom_payload, "Enter"])?;
 
     // Top-left: cd into the worktree.

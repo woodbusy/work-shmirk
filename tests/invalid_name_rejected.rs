@@ -15,9 +15,9 @@ fn name_with_slash_rejected() {
 }
 
 #[test]
-fn name_with_dotdot_rejected() {
+fn name_exactly_dotdot_rejected() {
     let env = TestEnv::new();
-    env.bin().args(["new", "foo..bar"]).assert().failure();
+    env.bin().args(["new", ".."]).assert().failure();
 }
 
 #[test]

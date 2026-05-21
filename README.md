@@ -32,10 +32,10 @@ work-shmirk remove [<worktree-name>]
 
 ### Worktree-name validation
 
-Worktree names must be a single path component (no `/`, no `..`) and must not
-contain shell metacharacters (`'`, `` ` ``, `$`, `\`, newline) or control
-characters. The CLI rejects invalid names up front, before any subprocess
-runs.
+Worktree names must be a single path component (no `/`) and must not be the
+path-traversal components `.` or `..`. They must not contain shell
+metacharacters (`'`, `` ` ``, `$`, `\`, newline) or control characters. The
+CLI rejects invalid names up front, before any subprocess runs.
 
 ## Configuration
 
@@ -124,6 +124,17 @@ There is no migration script.
 - **POSIX single-quote escaping:** all interpolated paths and the prompt
   string in tmux `send-keys` payloads are escaped via the standard
   `'` → `'\''` rewrite before being wrapped in single quotes.
+
+### Trust boundary on `remove`
+
+On `work-shmirk remove`, the binary reads config from the target worktree's
+`.work-shmirk/` first (falling back to the main repo's), matching the bash
+script. This means a worktree checked out from an untrusted branch can supply
+the `symlink_dir` and `symlink_links` used to clean up symlinks. The binary
+validates that every symlink candidate lies inside the configured per-worktree
+link dir before deleting it, so a hostile config cannot drive `remove_file`
+against arbitrary paths — but you should still only `remove` worktrees whose
+contents you trust.
 
 ## Binary override env vars
 

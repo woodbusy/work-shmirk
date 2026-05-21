@@ -26,9 +26,11 @@ impl TestEnv {
         let claude_log = stubs_dir.join("claude.log");
         let tmux_log = stubs_dir.join("tmux.log");
 
-        // Stub claude: log args (ignoring stdin) and exit 0.
+        // Stub claude: log args (ignoring stdin) and exit 0. Also log the
+        // current working directory so tests can assert claude was launched
+        // from the worktree target (matches bash `cd <wt> && claude ...`).
         let claude_script = format!(
-            "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\" >> \"{log}\"; done\nexit 0\n",
+            "#!/bin/sh\nprintf 'PWD=%s\\n' \"$PWD\" >> \"{log}\"\nfor a in \"$@\"; do printf '%s\\n' \"$a\" >> \"{log}\"; done\nexit 0\n",
             log = claude_log.display(),
         );
         write_executable(&stubs_dir.join("claude"), &claude_script);

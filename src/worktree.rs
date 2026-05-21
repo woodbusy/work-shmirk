@@ -14,6 +14,7 @@
 //! `.work-shmirk/` config dir follows the user into worktrees.
 
 use anyhow::{anyhow, Context, Result};
+use std::io::{IsTerminal, Write};
 use std::path::Path;
 use std::process::Command;
 
@@ -109,8 +110,13 @@ fn run_tmux_flow(settings: &Settings, target: &Path, name: &str, prompt: &str) -
     tmux::setup_panes(target, prompt, &window_name)?;
 
     // Bash does `clear` here. Emit the equivalent ANSI sequence rather than
-    // shelling out.
-    print!("\x1b[H\x1b[2J");
+    // shelling out, but only when stdout is a TTY so we don't corrupt
+    // redirected logs.
+    let mut stdout = std::io::stdout();
+    if stdout.is_terminal() {
+        print!("\x1b[H\x1b[2J");
+        let _ = stdout.flush();
+    }
     println!("Environment ready!");
     println!();
     Ok(())
@@ -124,8 +130,11 @@ fn run_inline_flow(target: &Path, prompt: &str) -> Result<()> {
     };
 
     // Run claude with the prompt as a single CLI arg (no stdin coupling).
+    // Set cwd to the worktree target so claude is launched from inside the
+    // new worktree, matching the bash flow which `cd`s before invoking it.
     let claude_status = Command::new(claude_bin())
         .arg(prompt)
+        .current_dir(target)
         .status()
         .context("invoking claude")?;
     if !claude_status.success() {

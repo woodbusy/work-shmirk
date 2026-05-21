@@ -3,6 +3,7 @@
 use anyhow::{anyhow, Context, Result};
 use std::path::Path;
 
+use crate::cli::parse_worktree_name;
 use crate::config::{expand_symlink_dir, load};
 use crate::git;
 use crate::symlinks::remove_symlinks;
@@ -23,7 +24,7 @@ pub fn run_remove(arg: Option<&str>) -> Result<()> {
                     "you're in the main worktree, not a removable worktree.\nUsage: work-shmirk remove <worktree-name>"
                 ));
             }
-            current_worktree
+            let basename = current_worktree
                 .file_name()
                 .ok_or_else(|| {
                     anyhow!(
@@ -32,13 +33,21 @@ pub fn run_remove(arg: Option<&str>) -> Result<()> {
                     )
                 })?
                 .to_string_lossy()
-                .to_string()
+                .to_string();
+            // Run the derived basename through the CLI validator so the
+            // default-name path enforces the same constraints as an explicit
+            // argument (rejects `..`, metachars, control chars).
+            parse_worktree_name(&basename)
+                .map_err(|e| anyhow!("derived worktree name from current dir is invalid: {}", e))?
         }
     };
 
     let target_path = worktrees_root.join(&name);
 
     // Pick config dir: target's own .work-shmirk if present, else main repo's.
+    // `is_dir()` (rather than `exists()`) intentionally falls back to the main
+    // repo's config when the per-worktree entry is missing OR exists-but-not-
+    // a-directory (file, broken symlink). This matches bash's `[ -d ... ]`.
     let target_cfg = target_path.join(".work-shmirk");
     let main_cfg = worktrees_root.join(".work-shmirk");
     let config_dir = if target_cfg.is_dir() {

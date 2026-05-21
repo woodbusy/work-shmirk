@@ -17,7 +17,11 @@ pub fn strip_one_dot(name: &str) -> &str {
 /// `link_source` is interpreted relative to `worktree_target`.
 ///
 /// Path validation:
-///   - `dest` (the link path under symlink_dir/name) is required to remain inside `symlink_dir_base`.
+///   - `dest` (the link path under symlink_dir/name) is required to remain inside
+///     the per-worktree link dir (`<symlink_dir_base>/<name>`). Validating against
+///     the per-worktree subdir (not the top-level base) prevents `strip_one_dot`
+///     from producing a dest that escapes the per-worktree subdir while still
+///     normalizing back inside `symlink_dir_base`.
 ///   - `link_source` is required to remain inside `worktree_target`.
 pub fn create_symlinks(
     worktree_target: &Path,
@@ -35,10 +39,10 @@ pub fn create_symlinks(
         }
         let stripped = strip_one_dot(link_source);
         let dest = worktree_link_dir.join(stripped);
-        ensure_inside(symlink_dir_base, &dest).with_context(|| {
+        ensure_inside(&worktree_link_dir, &dest).with_context(|| {
             format!(
                 "validating symlink dest for '{link_source}' under {}",
-                symlink_dir_base.display()
+                worktree_link_dir.display()
             )
         })?;
 
@@ -78,6 +82,16 @@ pub fn remove_symlinks(symlink_dir_base: &Path, name: &str, links: &[String]) ->
         }
         let stripped = strip_one_dot(link_source);
         let candidate = worktree_link_dir.join(stripped);
+        // Reject candidates that escape the per-worktree link dir before
+        // touching the filesystem. Without this guard a hostile config could
+        // drive `remove_file` against an arbitrary symlink outside the
+        // configured symlink dir at remove time.
+        ensure_inside(&worktree_link_dir, &candidate).with_context(|| {
+            format!(
+                "validating symlink dest for '{link_source}' under {}",
+                worktree_link_dir.display()
+            )
+        })?;
         println!("Removing {}", candidate.display());
         if is_symlink(&candidate) {
             std::fs::remove_file(&candidate)

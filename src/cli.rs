@@ -53,8 +53,11 @@ pub fn parse_worktree_name(raw: &str) -> Result<String, String> {
     if raw.contains('/') {
         return Err("worktree name must not contain '/'".to_string());
     }
-    if raw.contains("..") {
-        return Err("worktree name must not contain '..'".to_string());
+    // Reject only the path-traversal components themselves, not any substring
+    // containing `..`. `/` is already rejected above, so `raw` is a single
+    // path component — rejecting it whole is sufficient.
+    if raw == "." || raw == ".." {
+        return Err(format!("worktree name must not be '{raw}'"));
     }
     for ch in raw.chars() {
         if ch.is_control() {
@@ -97,7 +100,12 @@ mod tests {
     fn rejects_path_separators() {
         assert!(parse_worktree_name("foo/bar").is_err());
         assert!(parse_worktree_name("../escape").is_err());
-        assert!(parse_worktree_name("foo..bar").is_err());
+        // The full `..` and `.` components are rejected, but names that merely
+        // contain `..` as a substring (e.g. `foo..bar`) are accepted because
+        // `/` rejection already guarantees they cannot traverse.
+        assert!(parse_worktree_name("..").is_err());
+        assert!(parse_worktree_name(".").is_err());
+        assert!(parse_worktree_name("foo..bar").is_ok());
     }
 
     #[test]

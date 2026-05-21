@@ -97,17 +97,24 @@ pub fn merge_values(base: serde_json::Value, overlay: serde_json::Value) -> serd
 ///
 /// Note that mid-string `~` is NOT expanded (matches bash `${var/#\~/...}`).
 pub fn expand_symlink_dir(raw: &str) -> Option<PathBuf> {
+    let home = std::env::var("HOME").unwrap_or_default();
+    expand_symlink_dir_with_home(raw, &home)
+}
+
+/// Same as `expand_symlink_dir` but takes the home directory as an argument.
+/// Used by tests to avoid mutating the process-global `HOME` env var
+/// (which is shared across parallel tests in a single test binary).
+pub fn expand_symlink_dir_with_home(raw: &str, home: &str) -> Option<PathBuf> {
     if raw.is_empty() {
         return None;
     }
-    let home = std::env::var("HOME").unwrap_or_default();
     let mut expanded = if let Some(rest) = raw.strip_prefix('~') {
         format!("{home}{rest}")
     } else {
         raw.to_string()
     };
     if expanded.contains("$HOME") {
-        expanded = expanded.replace("$HOME", &home);
+        expanded = expanded.replace("$HOME", home);
     }
     Some(PathBuf::from(expanded))
 }
@@ -210,6 +217,15 @@ mod tests {
     }
 
     #[test]
+    fn merge_null_overlay_overwrites_base() {
+        // Documented quirk: an explicit `null` in the overlay overwrites the
+        // base value (matches jq's `*` operator).
+        let base = json!({"a": 1});
+        let overlay = json!({"a": null});
+        assert_eq!(merge_values(base, overlay), json!({"a": null}));
+    }
+
+    #[test]
     fn merge_arrays_replace() {
         let base = json!({"symlink_links": [".a", ".b"]});
         let overlay = json!({"symlink_links": [".c"]});
@@ -219,38 +235,35 @@ mod tests {
 
     #[test]
     fn expand_tilde_prefix() {
-        std::env::set_var("HOME", "/home/u");
         assert_eq!(
-            expand_symlink_dir("~/foo").unwrap(),
+            expand_symlink_dir_with_home("~/foo", "/home/u").unwrap(),
             PathBuf::from("/home/u/foo")
         );
     }
 
     #[test]
     fn expand_home_var() {
-        std::env::set_var("HOME", "/home/u");
         assert_eq!(
-            expand_symlink_dir("$HOME/foo").unwrap(),
+            expand_symlink_dir_with_home("$HOME/foo", "/home/u").unwrap(),
             PathBuf::from("/home/u/foo")
         );
         assert_eq!(
-            expand_symlink_dir("/x/$HOME/y").unwrap(),
+            expand_symlink_dir_with_home("/x/$HOME/y", "/home/u").unwrap(),
             PathBuf::from("/x//home/u/y")
         );
     }
 
     #[test]
     fn expand_no_mid_string_tilde() {
-        std::env::set_var("HOME", "/home/u");
         assert_eq!(
-            expand_symlink_dir("/x/~/y").unwrap(),
+            expand_symlink_dir_with_home("/x/~/y", "/home/u").unwrap(),
             PathBuf::from("/x/~/y")
         );
     }
 
     #[test]
     fn expand_empty_returns_none() {
-        assert!(expand_symlink_dir("").is_none());
+        assert!(expand_symlink_dir_with_home("", "/home/u").is_none());
     }
 
     #[test]

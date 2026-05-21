@@ -28,4 +28,19 @@ fn new_creates_worktree_dir_and_branch_and_invokes_claude() {
         log.contains("branch named 'feature-x'"),
         "claude prompt missing branch name. log: {log}"
     );
+
+    // Claude must have been launched with cwd == worktree target, matching
+    // the bash flow's `cd <wt> && claude ...`. The stub logs `PWD=<dir>`.
+    // On macOS `/var` is a symlink to `/private/var`, so canonicalize before
+    // comparing.
+    let expected_pwd = std::fs::canonicalize(&wt).unwrap();
+    let pwd_line = log
+        .lines()
+        .find(|l| l.starts_with("PWD="))
+        .unwrap_or_else(|| panic!("no PWD line in claude log: {log}"));
+    let logged_pwd = std::fs::canonicalize(pwd_line.trim_start_matches("PWD=")).unwrap();
+    assert_eq!(
+        logged_pwd, expected_pwd,
+        "claude was not launched from worktree target. log: {log}"
+    );
 }
