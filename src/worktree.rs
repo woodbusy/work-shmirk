@@ -47,6 +47,16 @@ pub fn run_new(name: &str, existing: bool) -> Result<()> {
     // From here, everything that operates on the worktree uses `target` as
     // the base. We do not change the Rust process cwd.
     setup_worktree_local(&target)?;
+
+    // Write a sentinel file only when we created the branch ourselves.  Its
+    // presence signals to `run_remove` that it is safe to delete the branch.
+    // When `-e` is used the branch pre-existed and must not be deleted.
+    if !existing {
+        let sentinel = target.join(".worktree-local/work-shmirk-owned-branch");
+        std::fs::File::create(&sentinel)
+            .with_context(|| format!("creating sentinel {}", sentinel.display()))?;
+    }
+
     setup_symlinks(&settings, &target, name)?;
     if let Some(ref files) = settings.copy_files {
         copy_files(&config_dir, &target, files)?;

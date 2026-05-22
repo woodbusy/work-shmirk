@@ -31,6 +31,14 @@ fn remove_takes_down_worktree_branch_and_symlinks() {
     assert!(wt.is_dir());
     assert!(symlink_base.join("feature-x").join("env").exists());
 
+    // `new` (without -e) must write the sentinel so `remove` knows it is safe
+    // to delete the branch.
+    let sentinel = wt.join(".worktree-local/work-shmirk-owned-branch");
+    assert!(
+        sentinel.exists(),
+        "sentinel file should have been written by `new`"
+    );
+
     // git worktree remove refuses if there are untracked/modified files (this
     // matches bash behavior too — the user normally commits or .gitignores
     // .worktree-local/ etc.). Stage what we care about and remove the rest
@@ -40,6 +48,13 @@ fn remove_takes_down_worktree_branch_and_symlinks() {
         .current_dir(&wt)
         .status()
         .unwrap();
+
+    // `git clean -fdx` removed the sentinel along with other untracked content.
+    // Recreate it so the remove flow sees it — this mirrors what happens in real
+    // usage where `.worktree-local/` is gitignored (so `git clean` would not
+    // touch it).
+    fs::create_dir_all(wt.join(".worktree-local")).unwrap();
+    fs::write(&sentinel, "").unwrap();
 
     // Now remove.
     env.bin().args(["remove", "feature-x"]).assert().success();

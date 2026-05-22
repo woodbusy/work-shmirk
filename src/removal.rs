@@ -73,11 +73,33 @@ pub fn run_remove(arg: Option<&str>) -> Result<()> {
     // us" problem when removing the worktree we're currently inside.
     let git_cwd: &Path = &worktrees_root;
 
+    // Capture the sentinel and the porcelain branch name *before* removing
+    // the worktree: the sentinel lives inside the worktree directory, and
+    // `git worktree list` needs the worktree to still exist.
+    let sentinel_present = target_path
+        .join(".worktree-local/work-shmirk-owned-branch")
+        .exists();
+    let attached_branch: Option<String> =
+        git::worktree_branch(git_cwd, &target_path).unwrap_or(None);
+
     println!("Removing worktree '{name}'");
     git::worktree_remove(git_cwd, &target_path)?;
 
-    println!("Deleting local branch '{name}'");
-    git::branch_delete_force(git_cwd, &name)?;
+    // Primary gate: only delete if work-shmirk created the branch.
+    // Defense-in-depth: also require the porcelain-reported branch name
+    // matches the worktree name (skip this extra check if lookup failed).
+    let branch_name_matches = attached_branch
+        .as_deref()
+        .map_or(true, |b| b == name.as_str());
+
+    if sentinel_present && branch_name_matches {
+        println!("Deleting local branch '{name}'");
+        git::branch_delete_force(git_cwd, &name)?;
+    } else {
+        eprintln!(
+            "Skipping branch delete: '{name}' was not created by work-shmirk (no sentinel found)"
+        );
+    }
 
     Ok(())
 }
