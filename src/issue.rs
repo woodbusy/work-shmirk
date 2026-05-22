@@ -1,9 +1,9 @@
 //! Branch-name → issue reference parsing.
 //!
 //! Four regexes evaluated in order, returning on first match:
-//!   1. `^issue-([0-9]+)`             — bare issue number, no prefix
+//!   1. `^issue-([0-9]{1,10})`             — bare issue number, no prefix
 //!   2. `^([A-Za-z]{2,7})-([0-9]{1,5})` — generic 2-7 letter prefix
-//!   3. `issue-([0-9]+)` (unanchored) — issue reference embedded in the name
+//!   3. `issue-([0-9]{1,10})` (unanchored) — issue reference embedded in the name
 //!   4. `^([0-9]+)-`                  — leading number with dash
 //!
 //! Prefix case is preserved verbatim (bash uses `${BASH_REMATCH[1]}` directly).
@@ -29,7 +29,7 @@ fn re_prefix() -> &'static Regex {
 
 fn re_issue() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"issue-([0-9]+)").unwrap())
+    RE.get_or_init(|| Regex::new(r"issue-([0-9]{1,10})").unwrap())
 }
 
 fn re_leading_num() -> &'static Regex {
@@ -106,7 +106,7 @@ mod tests {
     #[test]
     fn parses_issue_number_any_length() {
         // Guards against future reordering that would re-introduce a 5-digit
-        // cap; step 1 uses `[0-9]+` with no upper bound.
+        // cap; step 1 caps at 10 digits to cover all u32 values without silent overflow.
         let r = parse_issue("issue-12345").unwrap();
         assert_eq!(r.prefix, None);
         assert_eq!(r.number, 12345);
