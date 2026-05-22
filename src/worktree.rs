@@ -148,9 +148,7 @@ fn run_inline_flow(target: &Path, prompt: &str) -> Result<()> {
         .status()
         .context("invoking claude")?;
     if !claude_status.success() {
-        // Bash continues unconditionally after `claude "$CLAUDE_PROMPT"`; we
-        // match by not erroring here, just warning.
-        eprintln!("warning: claude exited with {}", claude_status);
+        return Err(anyhow!("claude exited with {}", claude_status));
     }
 
     println!();
