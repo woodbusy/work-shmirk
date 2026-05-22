@@ -92,10 +92,12 @@ pub fn merge_values(base: serde_json::Value, overlay: serde_json::Value) -> serd
 
 /// Expand a `symlink_dir` config string, matching bash semantics:
 ///   - empty input returns None (feature disabled)
-///   - leading `~` is replaced with `$HOME`
-///   - every literal `$HOME` substring is replaced with the value of `$HOME`
+///   - leading `~` is replaced with the value of `$HOME`
+///   - leading `$HOME` is replaced with the value of `$HOME`
 ///
-/// Note that mid-string `~` is NOT expanded (matches bash `${var/#\~/...}`).
+/// Note that mid-string `~` and mid-string `$HOME` are NOT expanded (matches
+/// bash `${var/#\~/...}`). The returned path is lexically normalized: redundant
+/// slashes and `./` segments are collapsed, but `..` is preserved as-is.
 pub fn expand_symlink_dir(raw: &str) -> Option<PathBuf> {
     let home = std::env::var("HOME").unwrap_or_default();
     expand_symlink_dir_with_home(raw, &home)
@@ -104,19 +106,31 @@ pub fn expand_symlink_dir(raw: &str) -> Option<PathBuf> {
 /// Same as `expand_symlink_dir` but takes the home directory as an argument.
 /// Used by tests to avoid mutating the process-global `HOME` env var
 /// (which is shared across parallel tests in a single test binary).
+///
+/// Only a leading `~` or leading `$HOME` token is expanded; any `$HOME` or `~`
+/// that appears mid-string is left literal. The returned path is lexically
+/// normalized (no `//` or `./` segments) but `..` components are preserved.
 pub fn expand_symlink_dir_with_home(raw: &str, home: &str) -> Option<PathBuf> {
     if raw.is_empty() {
         return None;
     }
-    let mut expanded = if let Some(rest) = raw.strip_prefix('~') {
+    let expanded = if let Some(rest) = raw.strip_prefix('~') {
+        format!("{home}{rest}")
+    } else if let Some(rest) = raw.strip_prefix("$HOME") {
         format!("{home}{rest}")
     } else {
         raw.to_string()
     };
-    if expanded.contains("$HOME") {
-        expanded = expanded.replace("$HOME", home);
-    }
-    Some(PathBuf::from(expanded))
+
+    // Lexically normalize: drop CurDir ("./") segments and collapse redundant
+    // separators, but keep ParentDir ("..") components in place — resolving ".."
+    // is the job of `ensure_inside`, not this function.
+    let normalized: PathBuf = PathBuf::from(&expanded)
+        .components()
+        .filter(|c| !matches!(c, Component::CurDir))
+        .collect();
+
+    Some(normalized)
 }
 
 /// Validate that `candidate` resolves to a path inside `base` (lexically;
@@ -247,9 +261,50 @@ mod tests {
             expand_symlink_dir_with_home("$HOME/foo", "/home/u").unwrap(),
             PathBuf::from("/home/u/foo")
         );
+        // Mid-string $HOME is NOT expanded — only leading $HOME is a token.
         assert_eq!(
             expand_symlink_dir_with_home("/x/$HOME/y", "/home/u").unwrap(),
-            PathBuf::from("/x//home/u/y")
+            PathBuf::from("/x/$HOME/y")
+        );
+    }
+
+    #[test]
+    fn expand_leading_home_var_only_at_start() {
+        // $HOME with no trailing path component still expands correctly.
+        assert_eq!(
+            expand_symlink_dir_with_home("$HOME", "/home/u").unwrap(),
+            PathBuf::from("/home/u")
+        );
+    }
+
+    #[test]
+    fn expand_collapses_double_slash() {
+        // Redundant slashes in the resulting path are normalized away.
+        assert_eq!(
+            expand_symlink_dir_with_home("~//foo", "/home/u").unwrap(),
+            PathBuf::from("/home/u/foo")
+        );
+        assert_eq!(
+            expand_symlink_dir_with_home("$HOME//foo", "/home/u").unwrap(),
+            PathBuf::from("/home/u/foo")
+        );
+    }
+
+    #[test]
+    fn expand_collapses_dot_segments() {
+        // CurDir (".") segments are dropped during normalization.
+        assert_eq!(
+            expand_symlink_dir_with_home("~/./foo", "/home/u").unwrap(),
+            PathBuf::from("/home/u/foo")
+        );
+    }
+
+    #[test]
+    fn expand_preserves_parent_dir_segments() {
+        // ParentDir ("..") is preserved as-is; resolving it is not our job.
+        assert_eq!(
+            expand_symlink_dir_with_home("~/a/../b", "/home/u").unwrap(),
+            PathBuf::from("/home/u/a/../b")
         );
     }
 
