@@ -40,14 +40,21 @@ impl TestEnv {
         // or split-window/-P), print a distinct fake pane id per invocation.
         // The id is derived from the number of --end-- markers already present
         // in the log before this invocation appends its own:
-        //   0 prior markers → %99 (display-message: top-left pane)
-        //   1 prior marker  → %100 (first split-window -P: right pane)
-        //   2 prior markers → %101 (second split-window -P: bottom pane)
+        //   1 prior marker  → %100 (display-message: top-left pane)
+        //   2 prior markers → %101 (first split-window -P: right pane)
+        //   4 prior markers → %103 (second split-window -P: bottom pane)
+        // n=3 belongs to the select-pane call between the two splits; it
+        // increments the counter but produces no -P output, leaving a gap at
+        // %102.
         // This keeps per-TestEnv isolation automatic and avoids a counter file.
+        let log_q = format!(
+            "'{}'",
+            tmux_log.display().to_string().replace('\'', "'\\''")
+        );
         let tmux_script = format!(
             concat!(
                 "#!/bin/sh\n",
-                "log='{log}'\n",
+                "log={log_q}\n",
                 // Count --end-- markers before this invocation writes its own.
                 "n=$(grep -c '^--end--$' \"$log\" 2>/dev/null || printf '0')\n",
                 "for a in \"$@\"; do printf '%s\\n' \"$a\" >> \"$log\"; done\n",
@@ -70,7 +77,7 @@ impl TestEnv {
                 "done\n",
                 "exit 0\n",
             ),
-            log = tmux_log.display(),
+            log_q = log_q,
         );
         write_executable(&stubs_dir.join("tmux"), &tmux_script);
 
