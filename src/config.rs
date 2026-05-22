@@ -117,7 +117,11 @@ pub fn expand_symlink_dir_with_home(raw: &str, home: &str) -> Option<PathBuf> {
     let expanded = if let Some(rest) = raw.strip_prefix('~') {
         format!("{home}{rest}")
     } else if let Some(rest) = raw.strip_prefix("$HOME") {
-        format!("{home}{rest}")
+        if rest.is_empty() || rest.starts_with('/') {
+            format!("{home}{rest}")
+        } else {
+            raw.to_string()
+        }
     } else {
         raw.to_string()
     };
@@ -274,6 +278,26 @@ mod tests {
         assert_eq!(
             expand_symlink_dir_with_home("$HOME", "/home/u").unwrap(),
             PathBuf::from("/home/u")
+        );
+    }
+
+    #[test]
+    fn expand_home_var_no_separator_is_literal() {
+        // "$HOMEfoo" must NOT expand — there is no separator after $HOME, so
+        // the token is not a leading $HOME variable reference.
+        assert_eq!(
+            expand_symlink_dir_with_home("$HOMEshared", "/home/u").unwrap(),
+            PathBuf::from("$HOMEshared")
+        );
+    }
+
+    #[test]
+    fn expand_tilde_with_trailing_slash_in_home() {
+        // A home value that itself has a trailing slash is handled correctly;
+        // PathBuf::components strips the redundant separator.
+        assert_eq!(
+            expand_symlink_dir_with_home("~/foo", "/home/u/").unwrap(),
+            PathBuf::from("/home/u/foo")
         );
     }
 
