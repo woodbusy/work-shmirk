@@ -1,13 +1,25 @@
 //! Tmux 3-pane setup for the `new` flow.
 //!
 //! Deliberate divergences from the bash script:
-//!   1. Right pane id is captured from `split-window -h -P -F '#{pane_id}'`
-//!      and used to target subsequent send-keys, instead of the bash script's
-//!      `-t right` (a non-standard reference that silently misfires on default
-//!      tmux configs).
-//!   2. The prompt is passed to `claude` as a single argument literal (with
-//!      POSIX single-quote escaping), eliminating the `"$(cat <tmpfile>)"`
-//!      indirection and the tempfile entirely.
+//!   1. Pane working directories are set via tmux `-c <dir>` (passed as an
+//!      argv element), so the worktree path never traverses a shell and
+//!      requires no shell escaping.
+//!   2. Pane commands are launched via `sh -c '<script>'` after `--`, not
+//!      typed as keystrokes via `send-keys`. This decouples behavior from the
+//!      user's interactive shell and eliminates the pane-payload injection
+//!      surface entirely.
+//!   3. The prompt is passed to `claude` as a single shell-escaped argument
+//!      inside the `sh -c` script (POSIX single-quote escaping). The claude
+//!      binary path is also shell-escaped for the same reason. These are the
+//!      only two user-derived strings that are interpolated into a shell
+//!      string.
+//!   4. The starting pane id is captured via `display-message -p '#{pane_id}'`
+//!      before the first split so we can target `respawn-pane` and `select-pane`
+//!      by id rather than by layout-relative names (`-L`, `-U`, `-D`).
+//!   5. The top-left pane is respawned via `respawn-pane -k` rather than
+//!      receiving `cd <dir>` keystrokes. Cost: the original pane's scrollback
+//!      is discarded; the new shell does not inherit in-process env mutations
+//!      from the original shell. See docs/contract.md.
 
 use anyhow::{bail, Context, Result};
 use std::path::Path;
@@ -61,39 +73,88 @@ pub fn setup_panes(worktree_target: &Path, prompt: &str, window_name: &str) -> R
     let target_str = worktree_target
         .to_str()
         .context("worktree path is not valid UTF-8")?;
-    let target_q = shell_single_quote(target_str);
+
+    // Escape only the strings that live inside a `sh -c` payload. The
+    // worktree path is passed via tmux `-c` (argv) and does not need escaping.
     let prompt_q = shell_single_quote(prompt);
+    let claude_q = shell_single_quote(&claude_bin());
 
     run_tmux(&["rename-window", window_name])?;
 
-    // Capture the right pane id from split-window -P -F.
-    let right_pane_id = run_tmux_capture(&["split-window", "-h", "-P", "-F", "#{pane_id}"])?;
-    if right_pane_id.is_empty() {
-        bail!("tmux split-window -P returned empty pane id");
+    // Capture the id of the starting pane so we can target it later by id
+    // rather than by a layout-relative name.
+    let top_left_pane_id = run_tmux_capture(&["display-message", "-p", "#{pane_id}"])?;
+    if top_left_pane_id.is_empty() {
+        bail!("tmux display-message returned empty pane id");
     }
 
-    // Right pane: cd + vim.
-    let right_payload = format!("cd {target_q} && vim");
-    run_tmux(&["send-keys", "-t", &right_pane_id, &right_payload, "Enter"])?;
+    // Right pane: split horizontally, launch vim directly in the worktree.
+    // `-P -F '#{pane_id}'` prints the new pane's id so we can refer to it
+    // later (not strictly needed for vim, but consistent with the pattern).
+    let right_pane_id = run_tmux_capture(&[
+        "split-window",
+        "-h",
+        "-P",
+        "-F",
+        "#{pane_id}",
+        "-c",
+        target_str,
+        "--",
+        "sh",
+        "-c",
+        "exec vim",
+    ])?;
+    if right_pane_id.is_empty() {
+        bail!("tmux split-window -h -P returned empty pane id");
+    }
 
-    // Select left pane (which is the original) and split vertically.
-    run_tmux(&["select-pane", "-L"])?;
-    run_tmux(&["split-window", "-v"])?;
+    // Return focus to the top-left pane by id before the vertical split.
+    // After the horizontal split above, focus is in the right pane. Without
+    // this select-pane, split-window -v would split the right pane instead.
+    run_tmux(&["select-pane", "-t", &top_left_pane_id])?;
 
-    // Bottom-left pane is now active: launch claude with the prompt as a
-    // single arg, then exec $SHELL. Honor WORK_SHMIRK_CLAUDE_BIN so the
-    // override propagates into the pane (single-quote escaped).
-    let claude_q = shell_single_quote(&claude_bin());
-    let bottom_payload = format!("cd {target_q} && {claude_q} {prompt_q} && exec $SHELL");
-    run_tmux(&["send-keys", &bottom_payload, "Enter"])?;
+    // Bottom-left pane: split the top-left vertically, launch claude with the
+    // prompt, then exec the user's shell so the pane stays alive after claude
+    // exits (`;` rather than `&&` — the user always lands in a shell).
+    let bottom_payload = format!("{claude_q} {prompt_q}; exec \"$SHELL\"");
+    let bottom_pane_id = run_tmux_capture(&[
+        "split-window",
+        "-v",
+        "-P",
+        "-F",
+        "#{pane_id}",
+        "-c",
+        target_str,
+        "--",
+        "sh",
+        "-c",
+        &bottom_payload,
+    ])?;
+    if bottom_pane_id.is_empty() {
+        bail!("tmux split-window -v -P returned empty pane id");
+    }
 
-    // Top-left: cd into the worktree.
-    run_tmux(&["select-pane", "-U"])?;
-    let top_payload = format!("cd {target_q}");
-    run_tmux(&["send-keys", &top_payload, "Enter"])?;
+    // Top-left pane: respawn with a fresh shell cwd'd in the worktree.
+    // `-k` kills the existing command (the shell work-shmirk was invoked from)
+    // and starts a new one. The user gets a clean shell prompt; no `cd`
+    // keystrokes appear in shell history. Trade-off: original scrollback is
+    // discarded and the new shell does not inherit the original's in-process
+    // env mutations. See docs/contract.md.
+    run_tmux(&[
+        "respawn-pane",
+        "-k",
+        "-t",
+        &top_left_pane_id,
+        "-c",
+        target_str,
+        "--",
+        "sh",
+        "-c",
+        "exec \"$SHELL\"",
+    ])?;
 
-    // Return focus to bottom-left.
-    run_tmux(&["select-pane", "-D"])?;
+    // Return focus to the bottom-left (claude) pane.
+    run_tmux(&["select-pane", "-t", &bottom_pane_id])?;
 
     Ok(())
 }

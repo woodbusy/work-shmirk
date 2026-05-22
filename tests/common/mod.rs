@@ -35,9 +35,41 @@ impl TestEnv {
         );
         write_executable(&stubs_dir.join("claude"), &claude_script);
 
-        // Stub tmux: log args, exit 0 (and for split-window -P, print a fake pane id).
+        // Stub tmux: log all argv elements (one per line) then append --end--.
+        // For invocations that produce a pane id in real tmux (display-message
+        // or split-window/-P), print a distinct fake pane id per invocation.
+        // The id is derived from the number of --end-- markers already present
+        // in the log before this invocation appends its own:
+        //   0 prior markers → %99 (display-message: top-left pane)
+        //   1 prior marker  → %100 (first split-window -P: right pane)
+        //   2 prior markers → %101 (second split-window -P: bottom pane)
+        // This keeps per-TestEnv isolation automatic and avoids a counter file.
         let tmux_script = format!(
-            "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\" >> \"{log}\"; done\nprintf '\\n--end--\\n' >> \"{log}\"\nfor a in \"$@\"; do\n  case \"$a\" in\n    -P) echo '%99'; exit 0 ;;\n  esac\ndone\nexit 0\n",
+            concat!(
+                "#!/bin/sh\n",
+                "log='{log}'\n",
+                // Count --end-- markers before this invocation writes its own.
+                "n=$(grep -c '^--end--$' \"$log\" 2>/dev/null || printf '0')\n",
+                "for a in \"$@\"; do printf '%s\\n' \"$a\" >> \"$log\"; done\n",
+                "printf '\\n--end--\\n' >> \"$log\"\n",
+                // display-message prints the current pane id.
+                "case \"$1\" in\n",
+                "  display-message)\n",
+                "    printf '%%%s\\n' \"$((99 + n))\"\n",
+                "    exit 0\n",
+                "    ;;\n",
+                "esac\n",
+                // split-window with -P prints the new pane id.
+                "for a in \"$@\"; do\n",
+                "  case \"$a\" in\n",
+                "    -P)\n",
+                "      printf '%%%s\\n' \"$((99 + n))\"\n",
+                "      exit 0\n",
+                "      ;;\n",
+                "  esac\n",
+                "done\n",
+                "exit 0\n",
+            ),
             log = tmux_log.display(),
         );
         write_executable(&stubs_dir.join("tmux"), &tmux_script);
