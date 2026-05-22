@@ -4,8 +4,8 @@ use common::{git, TestEnv};
 
 /// `work-shmirk remove` must not delete a branch that was not created by
 /// `work-shmirk new`.  When `-e` is used the worktree is attached to a
-/// pre-existing branch; no sentinel file is written, so the remove flow
-/// skips the branch delete.
+/// pre-existing branch; no ownership entry is written in git config, so the
+/// remove flow skips the branch delete.
 #[test]
 fn remove_preserves_existing_branch() {
     let env = TestEnv::new();
@@ -19,10 +19,15 @@ fn remove_preserves_existing_branch() {
     let wt = env.worktrees_root().join("keepme");
     assert!(wt.is_dir(), "worktree dir should exist after `new -e`");
 
-    // Sentinel must NOT be present because `-e` was used.
+    // Ownership must NOT be recorded in git config because `-e` was used.
+    let config_check = std::process::Command::new("git")
+        .args(["config", "--local", "work-shmirk.owned-branch"])
+        .current_dir(&wt)
+        .output()
+        .unwrap();
     assert!(
-        !wt.join(".worktree-local/work-shmirk-owned-branch").exists(),
-        "sentinel must not be written when `-e` is used"
+        !config_check.status.success(),
+        "work-shmirk.owned-branch must not be set in git config when `-e` is used"
     );
 
     // git worktree remove refuses if there are untracked/modified files;
@@ -33,8 +38,17 @@ fn remove_preserves_existing_branch() {
         .status()
         .unwrap();
 
-    // Remove the worktree.
-    env.bin().args(["remove", "keepme"]).assert().success();
+    // Remove the worktree; capture output to assert the skip message.
+    let output = env.bin().args(["remove", "keepme"]).output().unwrap();
+    assert!(
+        output.status.success(),
+        "remove should succeed even when branch is not deleted"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Skipping branch delete"),
+        "stderr should contain 'Skipping branch delete', got: {stderr}"
+    );
 
     assert!(!wt.exists(), "worktree dir should be gone after remove");
 

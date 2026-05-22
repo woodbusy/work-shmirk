@@ -85,6 +85,55 @@ pub fn branch_delete_force(cwd: &Path, name: &str) -> Result<()> {
     run_git_status(cwd, &["branch", "-D", name])
 }
 
+/// Record in the worktree's local git config that `work-shmirk` created the
+/// branch.  Writes `work-shmirk.owned-branch = <name>` into
+/// `.git/worktrees/<name>/config` (the per-worktree config file), which is
+/// not touched by `git clean` and requires git-level access to forge.
+///
+/// `worktree_path` must be the absolute path to the worktree directory.
+pub fn set_worktree_owned_branch(worktree_path: &Path, name: &str) -> Result<()> {
+    run_git_status(
+        worktree_path,
+        &["config", "--local", "work-shmirk.owned-branch", name],
+    )
+}
+
+/// Read `work-shmirk.owned-branch` from the worktree-local git config.
+/// Returns `Ok(Some(name))` when the key is set, `Ok(None)` when absent,
+/// and `Err` only for unexpected failures (git binary missing, etc.).
+///
+/// `worktree_path` must be the absolute path to the worktree directory.
+pub fn get_worktree_owned_branch(worktree_path: &Path) -> Result<Option<String>> {
+    let output = Command::new(git_bin())
+        .args(["config", "--local", "work-shmirk.owned-branch"])
+        .current_dir(worktree_path)
+        .stdin(Stdio::null())
+        .stderr(Stdio::piped())
+        .stdout(Stdio::piped())
+        .output()
+        .with_context(|| "invoking git config --local work-shmirk.owned-branch".to_string())?;
+
+    if output.status.success() {
+        let value = String::from_utf8(output.stdout)
+            .context("git config produced non-UTF8 output")?
+            .trim()
+            .to_string();
+        Ok(Some(value))
+    } else {
+        // Exit code 1 means the key is not set; any other code is an error.
+        match output.status.code() {
+            Some(1) => Ok(None),
+            _ => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                bail!(
+                    "git config --local work-shmirk.owned-branch failed: {}",
+                    stderr.trim()
+                )
+            }
+        }
+    }
+}
+
 /// Return the branch name attached to a given worktree path, with the
 /// `refs/heads/` prefix stripped.  Returns `Ok(None)` for detached HEAD,
 /// bare worktrees, or when no matching record is found.  If

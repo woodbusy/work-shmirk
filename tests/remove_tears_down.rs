@@ -31,12 +31,22 @@ fn remove_takes_down_worktree_branch_and_symlinks() {
     assert!(wt.is_dir());
     assert!(symlink_base.join("feature-x").join("env").exists());
 
-    // `new` (without -e) must write the sentinel so `remove` knows it is safe
-    // to delete the branch.
-    let sentinel = wt.join(".worktree-local/work-shmirk-owned-branch");
+    // `new` (without -e) must record ownership in git config so `remove` knows
+    // it is safe to delete the branch.
+    let git_config_output = std::process::Command::new("git")
+        .args(["config", "--local", "work-shmirk.owned-branch"])
+        .current_dir(&wt)
+        .output()
+        .unwrap();
     assert!(
-        sentinel.exists(),
-        "sentinel file should have been written by `new`"
+        git_config_output.status.success(),
+        "git config work-shmirk.owned-branch should be set after `new`"
+    );
+    let config_value = String::from_utf8_lossy(&git_config_output.stdout);
+    assert_eq!(
+        config_value.trim(),
+        "feature-x",
+        "work-shmirk.owned-branch should be set to 'feature-x'"
     );
 
     // git worktree remove refuses if there are untracked/modified files (this
@@ -49,12 +59,8 @@ fn remove_takes_down_worktree_branch_and_symlinks() {
         .status()
         .unwrap();
 
-    // `git clean -fdx` removed the sentinel along with other untracked content.
-    // Recreate it so the remove flow sees it — this mirrors what happens in real
-    // usage where `.worktree-local/` is gitignored (so `git clean` would not
-    // touch it).
-    fs::create_dir_all(wt.join(".worktree-local")).unwrap();
-    fs::write(&sentinel, "").unwrap();
+    // Ownership is tracked in `.git/worktrees/feature-x/config`, which `git
+    // clean -fdx` does not touch, so no recreation step is needed.
 
     // Now remove.
     env.bin().args(["remove", "feature-x"]).assert().success();

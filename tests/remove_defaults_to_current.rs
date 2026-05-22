@@ -10,6 +10,16 @@ fn remove_from_inside_worktree_defaults_to_basename() {
     let wt = env.worktrees_root().join("feature-y");
     assert!(wt.is_dir());
 
+    // git worktree remove refuses if there are untracked/modified files;
+    // clean the worktree first.  Ownership is recorded in git config (not in
+    // the working tree), so `git clean -fdx` does not affect the branch-delete
+    // gate.
+    std::process::Command::new("git")
+        .args(["clean", "-fdx"])
+        .current_dir(&wt)
+        .status()
+        .unwrap();
+
     // Run `remove` from inside the worktree (no arg → defaults to basename).
     let mut cmd = assert_cmd::Command::cargo_bin("work-shmirk").unwrap();
     cmd.current_dir(&wt);

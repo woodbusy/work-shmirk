@@ -19,7 +19,7 @@ pub struct IssueRef {
 
 fn re_issue_anchored() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"^issue-([0-9]+)").unwrap())
+    RE.get_or_init(|| Regex::new(r"^issue-([0-9]{1,10})").unwrap())
 }
 
 fn re_prefix() -> &'static Regex {

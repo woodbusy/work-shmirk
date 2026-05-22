@@ -48,13 +48,14 @@ pub fn run_new(name: &str, existing: bool) -> Result<()> {
     // the base. We do not change the Rust process cwd.
     setup_worktree_local(&target)?;
 
-    // Write a sentinel file only when we created the branch ourselves.  Its
-    // presence signals to `run_remove` that it is safe to delete the branch.
-    // When `-e` is used the branch pre-existed and must not be deleted.
+    // Record branch ownership in the worktree's local git config only when we
+    // created the branch ourselves.  This signals to `run_remove` that it is
+    // safe to delete the branch.  When `-e` is used the branch pre-existed
+    // and must not be deleted.  Git config lives in `.git/worktrees/<name>/config`
+    // which is unaffected by `git clean` and cannot be forged by writing files
+    // in the working tree.
     if !existing {
-        let sentinel = target.join(".worktree-local/work-shmirk-owned-branch");
-        std::fs::File::create(&sentinel)
-            .with_context(|| format!("creating sentinel {}", sentinel.display()))?;
+        git::set_worktree_owned_branch(&target, name)?;
     }
 
     setup_symlinks(&settings, &target, name)?;
@@ -148,7 +149,10 @@ fn run_inline_flow(target: &Path, prompt: &str) -> Result<()> {
         .status()
         .context("invoking claude")?;
     if !claude_status.success() {
-        return Err(anyhow!("claude exited with {}", claude_status));
+        return Err(anyhow!(
+            "claude exited with {}",
+            claude_status.code().unwrap_or(-1)
+        ));
     }
 
     println!();
