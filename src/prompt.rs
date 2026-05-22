@@ -244,4 +244,34 @@ mod tests {
         assert!(p.contains(".worktree-local/context.md"));
         assert!(p.contains("Do not continue the conversation"));
     }
+
+    #[test]
+    fn linear_without_prefix_or_project_uses_number() {
+        let issue = IssueRef {
+            prefix: None,
+            number: 7,
+        };
+        let p = build_prompt(
+            "issue-7",
+            Some(&issue),
+            Some(&cfg(Some("linear"), None, Some("linear"), None)),
+        );
+        assert!(p.contains("references issue 7."));
+        assert!(p.contains("'linear issue view 7'"));
+    }
+
+    #[test]
+    fn linear_with_prefix_and_no_configured_project_uses_verbatim_prefix() {
+        let issue = IssueRef {
+            prefix: Some("eng".into()),
+            number: 7,
+        };
+        let p = build_prompt(
+            "eng-7-foo",
+            Some(&issue),
+            Some(&cfg(Some("linear"), None, Some("linear"), None)),
+        );
+        assert!(p.contains("references issue eng-7."));
+        assert!(p.contains("'linear issue view eng-7'"));
+    }
 }
