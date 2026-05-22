@@ -8,7 +8,7 @@ These look like they could be "cleaned up" but are part of the documented surfac
 
 - `symlink_links` strips a single leading `.` from each entry, not all leading dots. e.g. `..env` becomes `.env`, not `env`.
 - `tmux.project_name_substitution` replaces only the first occurrence of `issues.project` in the window name.
-- The issue-prefix regex is `^([A-Za-z]{2,7})-([0-9]{1,5})`, evaluated case-insensitively, and **the prefix case is preserved**. `eng-42-foo` produces `eng-42` in the prompt, not `ENG-42`.
+- The issue-prefix regex is `^([A-Za-z]{2,7})-([0-9]{1,5})`. The character class `[A-Za-z]` accepts both upper- and lower-case letters; the regex itself is not a case-insensitive match — the prefix is captured exactly as written in the branch name and stored verbatim in `IssueRef.prefix`. Normalization happens at presentation time in `format_issue_ref` (the `linear | jira` arm only): when the branch prefix matches `issues.project` case-insensitively (via `str::eq_ignore_ascii_case`), the configured project's spelling is substituted — so `eng-42-foo` with `issues.project = "ENG"` produces `ENG-42`. When the prefix does not match, or no `issues.project` is configured, the verbatim branch prefix is used. ASCII-only comparison is sufficient because tracker project keys are ASCII letters. The `_` (custom / unknown `issues.type`) arm continues to use the verbatim branch prefix unconditionally.
 - A branch named `issue-7` matches the 2-7 letter prefix regex (`issue` is 5 letters), so `issue.type = "linear"` produces `issue-7`, not just `7`.
 
 ## Security design

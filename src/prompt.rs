@@ -62,13 +62,22 @@ fn format_issue_ref(
             Some(format!("gh issue view {}", issue.number)),
         ),
         "linear" | "jira" => {
-            // Prefix from branch wins; fall back to configured project.
-            let proj = issue
-                .prefix
-                .as_deref()
-                .or(cfg.project.as_deref())
-                .filter(|s| !s.is_empty());
-            let issue_ref_text = match proj {
+            // When the branch prefix matches the configured project key
+            // case-insensitively, substitute the configured spelling so that
+            // `eng-42-foo` + `issues.project = "ENG"` produces `ENG-42`.
+            // Non-matching prefixes are kept verbatim; absent prefix falls
+            // back to the configured project as before.
+            let normalized_prefix: Option<&str> = match (
+                issue.prefix.as_deref().filter(|s| !s.is_empty()),
+                cfg.project.as_deref().filter(|s| !s.is_empty()),
+            ) {
+                (Some(branch), Some(project)) if branch.eq_ignore_ascii_case(project) => {
+                    Some(project)
+                }
+                (Some(branch), _) => Some(branch),
+                (None, proj_opt) => proj_opt,
+            };
+            let issue_ref_text = match normalized_prefix {
                 Some(p) => format!("{p}-{}", issue.number),
                 None => issue.number.to_string(),
             };
@@ -142,7 +151,7 @@ mod tests {
     }
 
     #[test]
-    fn linear_with_branch_prefix_preserves_case() {
+    fn linear_with_branch_prefix_normalizes_to_config_case() {
         let issue = IssueRef {
             prefix: Some("eng".into()),
             number: 42,
@@ -152,9 +161,23 @@ mod tests {
             Some(&issue),
             Some(&cfg(Some("linear"), Some("ENG"), Some("linear"), None)),
         );
-        assert!(p.contains("references issue eng-42."));
-        assert!(p.contains("'linear issue view eng-42'"));
-        assert!(!p.contains("ENG-42"));
+        assert!(p.contains("references issue ENG-42."));
+        assert!(p.contains("'linear issue view ENG-42'"));
+    }
+
+    #[test]
+    fn linear_with_non_matching_prefix_preserved() {
+        let issue = IssueRef {
+            prefix: Some("gh".into()),
+            number: 42,
+        };
+        let p = build_prompt(
+            "gh-42-foo",
+            Some(&issue),
+            Some(&cfg(Some("linear"), Some("ENG"), Some("linear"), None)),
+        );
+        assert!(p.contains("references issue gh-42."));
+        assert!(p.contains("'linear issue view gh-42'"));
     }
 
     #[test]
