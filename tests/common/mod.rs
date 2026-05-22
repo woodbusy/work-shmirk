@@ -79,7 +79,7 @@ impl TestEnv {
     }
 }
 
-fn write_executable(path: &Path, content: &str) {
+pub fn write_executable(path: &Path, content: &str) {
     use std::os::unix::fs::PermissionsExt;
     std::fs::write(path, content).unwrap();
     let mut perms = std::fs::metadata(path).unwrap().permissions();

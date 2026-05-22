@@ -101,12 +101,15 @@ There is no migration script.
 - The issue-prefix regex is `^([A-Za-z]{2,7})-([0-9]{1,5})`, evaluated
   case-insensitively, and **the prefix case is preserved**. `eng-42-foo`
   produces `eng-42` in the prompt, not `ENG-42`.
-- A branch named `issue-7` matches the 2-7 letter prefix regex first
-  (`issue` is 5 letters), so `issue.type = "linear"` would produce `issue-7`,
-  not just `7`. This matches the bash script.
 
 ### Deliberate divergences
 
+- **`issue-N` branch names parse as bare numbers:** a branch like `issue-7`
+  produces issue number `7` with no prefix, regardless of `issue.type`. The
+  bash script matched the generic `^([A-Za-z]{2,7})-` prefix regex first
+  (since `issue` is 5 letters), yielding `issue-7` in the prompt. The Rust
+  port short-circuits `^issue-(\d+)` before that regex, matching the common
+  expectation that `issue-N` branches track a bare issue number.
 - **Right-pane targeting:** uses the pane id returned from
   `tmux split-window -h -P -F '#{pane_id}'` instead of the bash script's
   `-t right`, which is a non-standard pane reference that silently misfires

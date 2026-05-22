@@ -1,8 +1,12 @@
 //! Branch-name → issue reference parsing.
 //!
-//! Mirrors the bash control flow exactly: three regexes evaluated in order,
-//! returning on first match. Prefix case is preserved verbatim (bash uses
-//! `${BASH_REMATCH[1]}` directly).
+//! Four regexes evaluated in order, returning on first match:
+//!   1. `^issue-([0-9]{1,10})`             — bare issue number, no prefix
+//!   2. `^([A-Za-z]{2,7})-([0-9]{1,5})` — generic 2-7 letter prefix
+//!   3. `issue-([0-9]{1,10})` (unanchored) — issue reference embedded in the name
+//!   4. `^([0-9]+)-`                  — leading number with dash
+//!
+//! Prefix case is preserved verbatim (bash uses `${BASH_REMATCH[1]}` directly).
 
 use regex::Regex;
 use std::sync::OnceLock;
@@ -13,6 +17,11 @@ pub struct IssueRef {
     pub number: u32,
 }
 
+fn re_issue_anchored() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"^issue-([0-9]{1,10})").unwrap())
+}
+
 fn re_prefix() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| Regex::new(r"^([A-Za-z]{2,7})-([0-9]{1,5})").unwrap())
@@ -20,7 +29,7 @@ fn re_prefix() -> &'static Regex {
 
 fn re_issue() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"issue-([0-9]+)").unwrap())
+    RE.get_or_init(|| Regex::new(r"issue-([0-9]{1,10})").unwrap())
 }
 
 fn re_leading_num() -> &'static Regex {
@@ -30,6 +39,15 @@ fn re_leading_num() -> &'static Regex {
 
 /// Parse a worktree/branch name and return the issue reference if any.
 pub fn parse_issue(name: &str) -> Option<IssueRef> {
+    // Step 1: `issue-N` at the start of the name is always a bare issue number.
+    if let Some(caps) = re_issue_anchored().captures(name) {
+        let number: u32 = caps.get(1)?.as_str().parse().ok()?;
+        return Some(IssueRef {
+            prefix: None,
+            number,
+        });
+    }
+    // Step 2: generic 2-7 letter prefix (e.g. ENG-123, gh-42).
     if let Some(caps) = re_prefix().captures(name) {
         let prefix = caps.get(1)?.as_str().to_string();
         let number: u32 = caps.get(2)?.as_str().parse().ok()?;
@@ -38,6 +56,7 @@ pub fn parse_issue(name: &str) -> Option<IssueRef> {
             number,
         });
     }
+    // Step 3: `issue-N` embedded anywhere in the name.
     if let Some(caps) = re_issue().captures(name) {
         let number: u32 = caps.get(1)?.as_str().parse().ok()?;
         return Some(IssueRef {
@@ -45,6 +64,7 @@ pub fn parse_issue(name: &str) -> Option<IssueRef> {
             number,
         });
     }
+    // Step 4: leading number followed by a dash.
     if let Some(caps) = re_leading_num().captures(name) {
         let number: u32 = caps.get(1)?.as_str().parse().ok()?;
         return Some(IssueRef {
@@ -75,22 +95,29 @@ mod tests {
 
     #[test]
     fn parses_issue_prefix() {
-        // "issue" is 5 letters and matches the 2-7 letter prefix regex first.
-        // Matches bash: `[[ issue-7 =~ ^([A-Za-z]{2,7})-([0-9]{1,5}) ]]` captures
-        // "issue" and "7". (The plan's expectation of "no prefix, num 7" was
-        // wrong — scripts are authoritative and the script falls through
-        // regex 1 here.)
+        // `issue-N` at the start of a name always produces a bare issue number
+        // (no prefix). Step 1 (`^issue-([0-9]+)`) short-circuits before the
+        // generic prefix regex ever runs.
         let r = parse_issue("issue-7").unwrap();
-        assert_eq!(r.prefix.as_deref(), Some("issue"));
+        assert_eq!(r.prefix, None);
         assert_eq!(r.number, 7);
     }
 
     #[test]
+    fn parses_issue_number_any_length() {
+        // Guards against future reordering that would re-introduce a 5-digit
+        // cap; step 1 caps at 10 digits to cover all u32 values without silent overflow.
+        let r = parse_issue("issue-12345").unwrap();
+        assert_eq!(r.prefix, None);
+        assert_eq!(r.number, 12345);
+    }
+
+    #[test]
     fn parses_issue_unanchored() {
-        // First regex is anchored at start, so "foo-issue-7-bar" skips it
-        // (no leading 2-7 letter prefix-dash-digit pattern at position 0:
-        // "foo" is 3 letters but "foo-i" isn't followed by digits). It falls
-        // through to the unanchored `issue-([0-9]+)` regex.
+        // "foo-issue-7-bar": step 1 (`^issue-`) does not match (string does
+        // not start with `issue-`); step 2 (prefix regex) does not match
+        // (`foo-` is followed by `issue`, not digits); falls to step 3
+        // (unanchored `issue-([0-9]+)`).
         let r = parse_issue("foo-issue-7-bar").unwrap();
         assert_eq!(r.prefix, None);
         assert_eq!(r.number, 7);

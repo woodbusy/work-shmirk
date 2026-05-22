@@ -31,6 +31,24 @@ fn remove_takes_down_worktree_branch_and_symlinks() {
     assert!(wt.is_dir());
     assert!(symlink_base.join("feature-x").join("env").exists());
 
+    // `new` (without -e) must record ownership in git config so `remove` knows
+    // it is safe to delete the branch.
+    let git_config_output = std::process::Command::new("git")
+        .args(["config", "--local", "work-shmirk.owned-branch"])
+        .current_dir(&wt)
+        .output()
+        .unwrap();
+    assert!(
+        git_config_output.status.success(),
+        "git config work-shmirk.owned-branch should be set after `new`"
+    );
+    let config_value = String::from_utf8_lossy(&git_config_output.stdout);
+    assert_eq!(
+        config_value.trim(),
+        "feature-x",
+        "work-shmirk.owned-branch should be set to 'feature-x'"
+    );
+
     // git worktree remove refuses if there are untracked/modified files (this
     // matches bash behavior too — the user normally commits or .gitignores
     // .worktree-local/ etc.). Stage what we care about and remove the rest
@@ -40,6 +58,9 @@ fn remove_takes_down_worktree_branch_and_symlinks() {
         .current_dir(&wt)
         .status()
         .unwrap();
+
+    // Ownership is tracked in `.git/worktrees/feature-x/config`, which `git
+    // clean -fdx` does not touch, so no recreation step is needed.
 
     // Now remove.
     env.bin().args(["remove", "feature-x"]).assert().success();
