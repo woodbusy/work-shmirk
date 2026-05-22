@@ -1,9 +1,7 @@
 # work-shmirk
 
 A single Rust binary that wraps `git worktree` with optional Claude and tmux
-integration. It is a port of the `new-worktree` and `remove-worktree` bash
-scripts at <https://github.com/woodbusy/new-worktree>, consolidated into one
-CLI with subcommands.
+integration.
 
 ## Install
 
@@ -73,7 +71,7 @@ and arrays from the local file replace those in the base. This matches `jq`'s
 
   // Files inside the new worktree to expose as symlinks under
   // <symlink_dir>/<worktree-name>/. A single leading "." is stripped from
-  // the link name (matches bash `${name#.}`).
+  // the link name.
   "symlink_links": [".env", ".envrc"],
 
   // Tmux integration.
@@ -85,75 +83,25 @@ and arrays from the local file replace those in the base. This matches `jq`'s
 }
 ```
 
-## Differences from new-worktree (bash)
+## Security notes
 
-### Config-format break
-
-`.new-worktree/` (bash) is **not** compatible with `.work-shmirk/` (this tool).
-There is no migration script.
-
-### Bash quirks the Rust port preserves verbatim
-
-- `symlink_links` strips a single leading `.` (bash `${link_source#.}`), not
-  all leading dots. e.g. `..env` becomes `.env`, not `env`.
-- `tmux.project_name_substitution` replaces only the first occurrence in the
-  window name (bash `${var/x/y}` is single-replace).
-- The issue-prefix regex is `^([A-Za-z]{2,7})-([0-9]{1,5})`, evaluated
-  case-insensitively, and **the prefix case is preserved**. `eng-42-foo`
-  produces `eng-42` in the prompt, not `ENG-42`.
-
-### Deliberate divergences
-
-- **`issue-N` branch names parse as bare numbers:** a branch like `issue-7`
-  produces issue number `7` with no prefix, regardless of `issue.type`. The
-  bash script matched the generic `^([A-Za-z]{2,7})-` prefix regex first
-  (since `issue` is 5 letters), yielding `issue-7` in the prompt. The Rust
-  port short-circuits `^issue-(\d+)` before that regex, matching the common
-  expectation that `issue-N` branches track a bare issue number.
-- **Right-pane targeting:** uses the pane id returned from
-  `tmux split-window -h -P -F '#{pane_id}'` instead of the bash script's
-  `-t right`, which is a non-standard pane reference that silently misfires
-  on default tmux configurations.
-- **Tmux prompt delivery:** the Claude prompt is passed as a single shell-
-  escaped argument (`claude '<escaped-prompt>'`), not via
-  `claude "$(cat <tempfile>)"`. This eliminates the temp file and the
-  shell command-substitution path, so prompt content (derived from branch
-  names) cannot be re-expanded by the shell.
-- **Path-containment validation:** `copy_files` destinations are required to
-  stay inside the worktree root, and `symlink_links` entries are required to
-  stay inside both the configured `symlink_dir` and the worktree. The bash
-  script performs neither check, so a hostile config could write outside the
-  worktree.
-- **POSIX single-quote escaping:** all interpolated paths and the prompt
-  string in tmux `send-keys` payloads are escaped via the standard
-  `'` → `'\''` rewrite before being wrapped in single quotes.
-
-### Trust boundary on `remove`
-
-On `work-shmirk remove`, the binary reads config from the target worktree's
-`.work-shmirk/` first (falling back to the main repo's), matching the bash
-script. This means a worktree checked out from an untrusted branch can supply
-the `symlink_dir` and `symlink_links` used to clean up symlinks. The binary
-validates that every symlink candidate lies inside the configured per-worktree
-link dir before deleting it, so a hostile config cannot drive `remove_file`
-against arbitrary paths — but you should still only `remove` worktrees whose
-contents you trust.
+On `work-shmirk remove`, config is read from the target worktree first, so a
+hostile worktree could supply `symlink_dir` and `symlink_links` values. The
+binary validates containment before deleting, but you should still only
+`remove` worktrees whose contents you trust. See
+[docs/contract.md](docs/contract.md) for the full trust model and the
+load-bearing behaviors maintainers should preserve.
 
 ## Binary override env vars
 
-For testability the binary honors the following env vars (in all builds,
-including release):
+For testability the binary honors these env vars in all builds:
 
 - `WORK_SHMIRK_CLAUDE_BIN` — path to the `claude` binary (default: `claude`)
 - `WORK_SHMIRK_TMUX_BIN` — path to the `tmux` binary (default: `tmux`)
 - `WORK_SHMIRK_GIT_BIN` — path to the `git` binary (default: `git`)
 
-These are a deliberate trade-off: tests stub `claude` and `tmux` via these
-variables. The security implication is that anyone who can set environment
-variables in your shell (a sourced rc file, a `direnv` `.envrc`, an
-inadvertently-trusted shell script) can redirect work-shmirk's subprocess
-calls. Treat them like any other shell-resolved binary: only trust the
-environment you trust.
+These can redirect work-shmirk's subprocess calls — see
+[docs/contract.md](docs/contract.md) for the trust model.
 
 ## Test-only env var
 
