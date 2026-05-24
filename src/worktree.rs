@@ -158,7 +158,10 @@ fn run_inline_flow(target: &Path, prompt: &str) -> Result<()> {
     println!();
     println!("Launching shell in new worktree at {}", target.display());
 
-    // Test-only seam: short-circuit before exec.
+    // Test-only seam: short-circuit before exec (inline flow only). When
+    // running inside tmux, pane commands are launched by tmux itself — no
+    // exec happens in the Rust process on that path, so NO_EXEC has no
+    // effect there.
     if std::env::var_os("WORK_SHMIRK_NO_EXEC").is_some() {
         return Ok(());
     }

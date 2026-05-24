@@ -6,9 +6,9 @@ use common::{write_executable, TestEnv};
 /// continue).  This guards against silently swallowing a misconfigured or
 /// crashed claude invocation and dropping the user into a shell anyway.
 ///
-/// Note: the tmux flow is unchanged — it hands off to `tmux send-keys` and
-/// never observes claude's exit code.  This test exercises the inline flow
-/// only (TMUX is unset by `TestEnv::bin`).
+/// Note: the tmux flow is unchanged — it hands off pane command execution to
+/// tmux directly and never observes claude's exit code.  This test exercises
+/// the inline flow only (TMUX is unset by `TestEnv::bin`).
 #[test]
 fn new_propagates_claude_failure() {
     let env = TestEnv::new();

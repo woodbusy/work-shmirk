@@ -35,10 +35,49 @@ impl TestEnv {
         );
         write_executable(&stubs_dir.join("claude"), &claude_script);
 
-        // Stub tmux: log args, exit 0 (and for split-window -P, print a fake pane id).
+        // Stub tmux: log all argv elements (one per line) then append --end--.
+        // For invocations that produce a pane id in real tmux (display-message
+        // or split-window/-P), print a distinct fake pane id per invocation.
+        // The id is derived from the number of --end-- markers already present
+        // in the log before this invocation appends its own:
+        //   1 prior marker  → %100 (display-message: top-left pane)
+        //   2 prior markers → %101 (first split-window -P: right pane)
+        //   4 prior markers → %103 (second split-window -P: bottom pane)
+        // n=3 belongs to the select-pane call between the two splits; it
+        // increments the counter but produces no -P output, leaving a gap at
+        // %102.
+        // This keeps per-TestEnv isolation automatic and avoids a counter file.
+        let log_q = format!(
+            "'{}'",
+            tmux_log.display().to_string().replace('\'', "'\\''")
+        );
         let tmux_script = format!(
-            "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\" >> \"{log}\"; done\nprintf '\\n--end--\\n' >> \"{log}\"\nfor a in \"$@\"; do\n  case \"$a\" in\n    -P) echo '%99'; exit 0 ;;\n  esac\ndone\nexit 0\n",
-            log = tmux_log.display(),
+            concat!(
+                "#!/bin/sh\n",
+                "log={log_q}\n",
+                // Count --end-- markers before this invocation writes its own.
+                "n=$(grep -c '^--end--$' \"$log\" 2>/dev/null || printf '0')\n",
+                "for a in \"$@\"; do printf '%s\\n' \"$a\" >> \"$log\"; done\n",
+                "printf '\\n--end--\\n' >> \"$log\"\n",
+                // display-message prints the current pane id.
+                "case \"$1\" in\n",
+                "  display-message)\n",
+                "    printf '%%%s\\n' \"$((99 + n))\"\n",
+                "    exit 0\n",
+                "    ;;\n",
+                "esac\n",
+                // split-window with -P prints the new pane id.
+                "for a in \"$@\"; do\n",
+                "  case \"$a\" in\n",
+                "    -P)\n",
+                "      printf '%%%s\\n' \"$((99 + n))\"\n",
+                "      exit 0\n",
+                "      ;;\n",
+                "  esac\n",
+                "done\n",
+                "exit 0\n",
+            ),
+            log_q = log_q,
         );
         write_executable(&stubs_dir.join("tmux"), &tmux_script);
 
