@@ -57,15 +57,28 @@ pub fn run_remove(arg: Option<&str>) -> Result<()> {
     //    different config that may remove the wrong symlinks.
     let target_cfg = target_path.join(".work-shmirk");
     let main_cfg = worktrees_root.join(".work-shmirk");
+    // Three-way check using a single metadata probe to avoid TOCTOU and double
+    // syscalls. `is_dir()` follows symlinks; we use `symlink_metadata()` to
+    // distinguish "absent" from "present but wrong type".
     let config_dir = if target_cfg.is_dir() {
         target_cfg
-    } else if target_cfg.symlink_metadata().is_err() {
-        main_cfg
     } else {
-        return Err(anyhow!(
-            "{} exists but is not a directory; it must be a directory (or absent) for work-shmirk to load config",
-            target_cfg.display()
-        ));
+        match target_cfg.symlink_metadata() {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => main_cfg,
+            Err(e) => {
+                return Err(anyhow!(
+                    "{} could not be probed: {}",
+                    target_cfg.display(),
+                    e
+                ))
+            }
+            Ok(_) => {
+                return Err(anyhow!(
+                    "{} exists but is not a directory; it must be a directory (or absent) for work-shmirk to load config",
+                    target_cfg.display()
+                ))
+            }
+        }
     };
 
     let settings = load(&config_dir)?;

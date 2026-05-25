@@ -24,7 +24,11 @@ fn remove_fails_when_target_cfg_is_regular_file() {
     let bad_cfg = wt.join(".work-shmirk");
     fs::write(&bad_cfg, "").unwrap();
 
-    env.bin().args(["remove", "feature-y"]).assert().failure();
+    env.bin()
+        .args(["remove", "feature-y"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("exists but is not a directory"));
 
     // The worktree must still exist: the error must fire before any destructive
     // git operation (worktree remove, branch delete).
@@ -48,7 +52,11 @@ fn remove_fails_when_target_cfg_is_broken_symlink() {
     let bad_cfg = wt.join(".work-shmirk");
     std::os::unix::fs::symlink("/nonexistent/path", &bad_cfg).unwrap();
 
-    env.bin().args(["remove", "feature-z"]).assert().failure();
+    env.bin()
+        .args(["remove", "feature-z"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("exists but is not a directory"));
 
     assert!(
         wt.is_dir(),
