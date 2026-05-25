@@ -25,6 +25,8 @@ These look like they could be "cleaned up" but are part of the documented surfac
 
 On `work-shmirk remove`, the binary reads config from the target worktree's `.work-shmirk/` first, falling back to the main repo's. A worktree checked out from an untrusted branch can therefore supply the `symlink_dir` and `symlink_links` used to clean up symlinks. The binary validates that every symlink candidate lies inside the configured per-worktree link dir before deleting it, so a hostile config cannot drive `remove_file` against arbitrary paths — but you should still only `remove` worktrees whose contents you trust.
 
+If the per-worktree `.work-shmirk` entry exists but is not a directory (regular file, broken symlink, socket, etc.), `remove` aborts with an error before performing any destructive git operation, rather than silently falling back to the main-repo config. Fix or remove the bad entry before retrying.
+
 ## Binary override env vars
 
 For testability the binary honors these env vars in all builds, including release:
