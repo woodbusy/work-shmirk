@@ -71,8 +71,9 @@ and arrays from the local file replace those in the base. This matches `jq`'s
   "symlink_dir": "~/worktree-links",
 
   // Files inside the new worktree to expose as symlinks under
-  // <symlink_dir>/<worktree-name>/. A single leading "." is stripped from
-  // the link name.
+  // <symlink_dir>/<worktree-name>/. All leading dots are stripped from the
+  // link name: ".env" → "env", "..env" → "env". Entries that are empty or
+  // that strip to empty ("..", "...", etc.) are rejected with an error.
   "symlink_links": [".env", ".envrc"],
 
   // Tmux integration.
