@@ -60,7 +60,7 @@ pub fn run_remove(arg: Option<&str>) -> Result<()> {
 
     // --- Remove symlinks ---
     if let Some(dir_raw) = settings.symlink_dir.as_deref() {
-        if let Some(base) = expand_symlink_dir(dir_raw) {
+        if let Some(base) = expand_symlink_dir(dir_raw)? {
             let links = settings.symlink_links.clone().unwrap_or_default();
             remove_symlinks(&base, &name, &links)?;
         }

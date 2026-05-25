@@ -90,15 +90,22 @@ pub fn merge_values(base: serde_json::Value, overlay: serde_json::Value) -> serd
     }
 }
 
-/// Expand a `symlink_dir` config string, matching bash semantics:
-///   - empty input returns None (feature disabled)
-///   - leading `~` is replaced with the value of `$HOME`
-///   - leading `$HOME` is replaced with the value of `$HOME`
+/// Expand a `symlink_dir` config string. The following leading tokens are
+/// recognized and replaced with the value of `$HOME`:
+///   - `~/...` or bare `~`
+///   - `$HOME/...` or bare `$HOME`
+///   - `${HOME}/...` or bare `${HOME}`
 ///
-/// Note that mid-string `~` and mid-string `$HOME` are NOT expanded (matches
-/// bash `${var/#\~/...}`). The returned path is lexically normalized: redundant
-/// slashes and `./` segments are collapsed, but `..` is preserved as-is.
-pub fn expand_symlink_dir(raw: &str) -> Option<PathBuf> {
+/// Any `~` not immediately followed by `/` or end-of-string (e.g. `~alice/`)
+/// is an error — `~user`-style home-dir lookup is not supported.
+///
+/// Mid-string occurrences of `~`, `$HOME`, or `${HOME}` are left literal
+/// (matches bash `${var/#\~/...}` semantics). The returned path is lexically
+/// normalized: redundant slashes and `./` segments are collapsed, but `..` is
+/// preserved as-is.
+///
+/// Returns `Ok(None)` when `raw` is empty (feature disabled).
+pub fn expand_symlink_dir(raw: &str) -> Result<Option<PathBuf>> {
     let home = std::env::var("HOME").unwrap_or_default();
     expand_symlink_dir_with_home(raw, &home)
 }
@@ -107,18 +114,36 @@ pub fn expand_symlink_dir(raw: &str) -> Option<PathBuf> {
 /// Used by tests to avoid mutating the process-global `HOME` env var
 /// (which is shared across parallel tests in a single test binary).
 ///
-/// Only a leading `~` or leading `$HOME` token is expanded; any `$HOME` or `~`
-/// that appears mid-string is left literal. The returned path is lexically
-/// normalized (no `//` or `./` segments) but `..` components are preserved.
-pub fn expand_symlink_dir_with_home(raw: &str, home: &str) -> Option<PathBuf> {
+/// Recognized leading tokens: `~`, `$HOME`, `${HOME}`. A `~` not followed by
+/// `/` or end-of-string is rejected with an error. Mid-string occurrences are
+/// left literal. The returned path is lexically normalized (no `//` or `./`
+/// segments) but `..` components are preserved.
+pub fn expand_symlink_dir_with_home(raw: &str, home: &str) -> Result<Option<PathBuf>> {
     if raw.is_empty() {
-        return None;
+        return Ok(None);
     }
-    let expanded = if let Some(rest) = raw.strip_prefix('~') {
-        format!("{home}{rest}")
-    } else if let Some(rest) = raw.strip_prefix("$HOME") {
-        if rest.is_empty() || rest.starts_with('/') {
-            format!("{home}{rest}")
+    let expanded = if let Some(after_tilde) = raw.strip_prefix('~') {
+        // `~` must be followed by `/` or end-of-string; anything else (e.g.
+        // `~alice`) is unsupported and would silently produce a broken path.
+        if after_tilde.is_empty() || after_tilde.starts_with('/') {
+            format!("{home}{after_tilde}")
+        } else {
+            return Err(anyhow!(
+                "unsupported symlink_dir value {raw:?}: `~` must be followed by `/` or \
+                 end-of-string; `~user`-style home-dir expansion is not supported"
+            ));
+        }
+    } else if let Some(after_home) = raw.strip_prefix("${HOME}") {
+        // `${HOME}` is only recognized when followed by `/` or end-of-string.
+        if after_home.is_empty() || after_home.starts_with('/') {
+            format!("{home}{after_home}")
+        } else {
+            raw.to_string()
+        }
+    } else if let Some(after_home) = raw.strip_prefix("$HOME") {
+        // `$HOME` is only recognized when followed by `/` or end-of-string.
+        if after_home.is_empty() || after_home.starts_with('/') {
+            format!("{home}{after_home}")
         } else {
             raw.to_string()
         }
@@ -134,7 +159,7 @@ pub fn expand_symlink_dir_with_home(raw: &str, home: &str) -> Option<PathBuf> {
         .filter(|c| !matches!(c, Component::CurDir))
         .collect();
 
-    Some(normalized)
+    Ok(Some(normalized))
 }
 
 /// Validate that `candidate` resolves to a path inside `base` (lexically;
@@ -254,7 +279,9 @@ mod tests {
     #[test]
     fn expand_tilde_prefix() {
         assert_eq!(
-            expand_symlink_dir_with_home("~/foo", "/home/u").unwrap(),
+            expand_symlink_dir_with_home("~/foo", "/home/u")
+                .unwrap()
+                .unwrap(),
             PathBuf::from("/home/u/foo")
         );
     }
@@ -262,12 +289,16 @@ mod tests {
     #[test]
     fn expand_home_var() {
         assert_eq!(
-            expand_symlink_dir_with_home("$HOME/foo", "/home/u").unwrap(),
+            expand_symlink_dir_with_home("$HOME/foo", "/home/u")
+                .unwrap()
+                .unwrap(),
             PathBuf::from("/home/u/foo")
         );
         // Mid-string $HOME is NOT expanded — only leading $HOME is a token.
         assert_eq!(
-            expand_symlink_dir_with_home("/x/$HOME/y", "/home/u").unwrap(),
+            expand_symlink_dir_with_home("/x/$HOME/y", "/home/u")
+                .unwrap()
+                .unwrap(),
             PathBuf::from("/x/$HOME/y")
         );
     }
@@ -276,7 +307,9 @@ mod tests {
     fn expand_leading_home_var_only_at_start() {
         // $HOME with no trailing path component still expands correctly.
         assert_eq!(
-            expand_symlink_dir_with_home("$HOME", "/home/u").unwrap(),
+            expand_symlink_dir_with_home("$HOME", "/home/u")
+                .unwrap()
+                .unwrap(),
             PathBuf::from("/home/u")
         );
     }
@@ -286,7 +319,9 @@ mod tests {
         // "$HOMEfoo" must NOT expand — there is no separator after $HOME, so
         // the token is not a leading $HOME variable reference.
         assert_eq!(
-            expand_symlink_dir_with_home("$HOMEshared", "/home/u").unwrap(),
+            expand_symlink_dir_with_home("$HOMEshared", "/home/u")
+                .unwrap()
+                .unwrap(),
             PathBuf::from("$HOMEshared")
         );
     }
@@ -296,7 +331,9 @@ mod tests {
         // A home value that itself has a trailing slash is handled correctly;
         // PathBuf::components strips the redundant separator.
         assert_eq!(
-            expand_symlink_dir_with_home("~/foo", "/home/u/").unwrap(),
+            expand_symlink_dir_with_home("~/foo", "/home/u/")
+                .unwrap()
+                .unwrap(),
             PathBuf::from("/home/u/foo")
         );
     }
@@ -305,11 +342,21 @@ mod tests {
     fn expand_collapses_double_slash() {
         // Redundant slashes in the resulting path are normalized away.
         assert_eq!(
-            expand_symlink_dir_with_home("~//foo", "/home/u").unwrap(),
+            expand_symlink_dir_with_home("~//foo", "/home/u")
+                .unwrap()
+                .unwrap(),
             PathBuf::from("/home/u/foo")
         );
         assert_eq!(
-            expand_symlink_dir_with_home("$HOME//foo", "/home/u").unwrap(),
+            expand_symlink_dir_with_home("$HOME//foo", "/home/u")
+                .unwrap()
+                .unwrap(),
+            PathBuf::from("/home/u/foo")
+        );
+        assert_eq!(
+            expand_symlink_dir_with_home("${HOME}//foo", "/home/u")
+                .unwrap()
+                .unwrap(),
             PathBuf::from("/home/u/foo")
         );
     }
@@ -318,7 +365,9 @@ mod tests {
     fn expand_collapses_dot_segments() {
         // CurDir (".") segments are dropped during normalization.
         assert_eq!(
-            expand_symlink_dir_with_home("~/./foo", "/home/u").unwrap(),
+            expand_symlink_dir_with_home("~/./foo", "/home/u")
+                .unwrap()
+                .unwrap(),
             PathBuf::from("/home/u/foo")
         );
     }
@@ -327,7 +376,9 @@ mod tests {
     fn expand_preserves_parent_dir_segments() {
         // ParentDir ("..") is preserved as-is; resolving it is not our job.
         assert_eq!(
-            expand_symlink_dir_with_home("~/a/../b", "/home/u").unwrap(),
+            expand_symlink_dir_with_home("~/a/../b", "/home/u")
+                .unwrap()
+                .unwrap(),
             PathBuf::from("/home/u/a/../b")
         );
     }
@@ -335,14 +386,98 @@ mod tests {
     #[test]
     fn expand_no_mid_string_tilde() {
         assert_eq!(
-            expand_symlink_dir_with_home("/x/~/y", "/home/u").unwrap(),
+            expand_symlink_dir_with_home("/x/~/y", "/home/u")
+                .unwrap()
+                .unwrap(),
             PathBuf::from("/x/~/y")
         );
     }
 
     #[test]
     fn expand_empty_returns_none() {
-        assert!(expand_symlink_dir_with_home("", "/home/u").is_none());
+        assert!(expand_symlink_dir_with_home("", "/home/u")
+            .unwrap()
+            .is_none());
+    }
+
+    // --- new tests for ${HOME} form and ~user error ---
+
+    #[test]
+    fn expand_brace_home_with_path() {
+        assert_eq!(
+            expand_symlink_dir_with_home("${HOME}/foo", "/home/u")
+                .unwrap()
+                .unwrap(),
+            PathBuf::from("/home/u/foo")
+        );
+    }
+
+    #[test]
+    fn expand_brace_home_bare() {
+        assert_eq!(
+            expand_symlink_dir_with_home("${HOME}", "/home/u")
+                .unwrap()
+                .unwrap(),
+            PathBuf::from("/home/u")
+        );
+    }
+
+    #[test]
+    fn expand_brace_home_no_separator_is_literal() {
+        // `${HOME}shared` — no `/` after `}`, so the token is left literal.
+        assert_eq!(
+            expand_symlink_dir_with_home("${HOME}shared", "/home/u")
+                .unwrap()
+                .unwrap(),
+            PathBuf::from("${HOME}shared")
+        );
+    }
+
+    #[test]
+    fn expand_brace_home_longer_var_is_literal() {
+        // `${HOMEshared}` — the closing `}` is not in the `${HOME}` position,
+        // so the naive "strip `${HOME`, find `}`" path is guarded against.
+        assert_eq!(
+            expand_symlink_dir_with_home("${HOMEshared}", "/home/u")
+                .unwrap()
+                .unwrap(),
+            PathBuf::from("${HOMEshared}")
+        );
+    }
+
+    #[test]
+    fn expand_tilde_user_returns_error() {
+        // `~alice/foo` is not supported and must produce a clear error.
+        assert!(expand_symlink_dir_with_home("~alice/foo", "/home/u").is_err());
+    }
+
+    #[test]
+    fn expand_tilde_dot_returns_error() {
+        // `~.gitconfig` also hits the "not `/` or end" arm — rule is about the
+        // character after `~`, not specifically user names.
+        assert!(expand_symlink_dir_with_home("~.gitconfig", "/home/u").is_err());
+    }
+
+    #[test]
+    fn expand_tilde_bare_still_expands() {
+        // A bare `~` (no trailing bytes) must still expand to `$HOME`.
+        assert_eq!(
+            expand_symlink_dir_with_home("~", "/home/u")
+                .unwrap()
+                .unwrap(),
+            PathBuf::from("/home/u")
+        );
+    }
+
+    #[test]
+    fn expand_mid_string_brace_home_is_literal() {
+        // Mid-string `${HOME}` must not be expanded.
+        assert_eq!(
+            expand_symlink_dir_with_home("/x/${HOME}/y", "/home/u")
+                .unwrap()
+                .unwrap(),
+            PathBuf::from("/x/${HOME}/y")
+        );
     }
 
     #[test]

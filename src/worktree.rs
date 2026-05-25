@@ -89,7 +89,7 @@ fn setup_symlinks(settings: &Settings, target: &Path, name: &str) -> Result<()> 
     let Some(ref dir_raw) = settings.symlink_dir else {
         return Ok(());
     };
-    let Some(base) = expand_symlink_dir(dir_raw) else {
+    let Some(base) = expand_symlink_dir(dir_raw)? else {
         return Ok(());
     };
     let links = settings.symlink_links.clone().unwrap_or_default();
