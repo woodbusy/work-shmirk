@@ -51,13 +51,7 @@ pub fn create_symlinks(
         .with_context(|| format!("creating symlink dir {}", worktree_link_dir.display()))?;
 
     for link_source in links {
-        if link_source.is_empty() {
-            anyhow::bail!("symlink_links entry is empty");
-        }
         let stripped = strip_leading_dots(link_source);
-        if stripped.is_empty() {
-            anyhow::bail!("symlink_links entry strips to empty name: '{link_source}'");
-        }
         let dest = worktree_link_dir.join(stripped);
         ensure_inside(&worktree_link_dir, &dest).with_context(|| {
             format!(
