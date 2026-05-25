@@ -58,10 +58,11 @@ and arrays from the local file replace those in the base. This matches `jq`'s
     // configured spelling is used in the emitted issue reference and fetch
     // command (e.g. branch `eng-42-foo` + `"project": "ENG"` → `ENG-42`).
     // When no `project` is configured, or the branch prefix does not match,
-    // the branch prefix is used verbatim. Users relying on a case-sensitive
-    // Linear or Jira CLI should configure `project` or use canonical-case
-    // branch names. For "github" and other types, `project` is unused.
-    // When the branch has no prefix, `project` is used as a fallback.
+    // the branch prefix is used verbatim; when the branch has no prefix at
+    // all, `project` is used as the fallback prefix. Users relying on a
+    // case-sensitive Linear or Jira CLI should configure `project` or use
+    // canonical-case branch names. For "github" and other types, `project`
+    // is unused.
     "project": "ENG",
     "cli": "linear",          // optional CLI for fetching issue details
     "skill": "linear-cli"     // optional Claude skill name
