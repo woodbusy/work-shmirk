@@ -42,8 +42,22 @@ pub fn build_prompt(
         }
     }
 
+    out.push_str("\n\n");
     out.push_str(
-        "\n\nPlease interact with the user to understand the goal and purpose of this branch/worktree, then create a file at .worktree-local/context.md (which directory already exists and does not need to be created) that provides context for future Claude agents working in this worktree.\n\nCRITICAL: The context file should be BRIEF (20-200 words) and capture only the essential goals. Details available elsewhere (e.g., in a GitHub/Jira/Linear issue) should be REFERENCED not duplicated in the context file. Implementation details should not be included either.\n\nThe context should include:\n- The branch purpose and goals but not implementation details\n- Links to related issues, PRs, or documentation\n- Any critical constraints or considerations\n\nKeep it concise - link to details rather than repeating them.\n\nPlease start by asking the user about their goals for this branch.\n\nIMPORTANT: After you have created the context.md file, your task is complete. Do not continue the conversation or offer additional help.",
+r#"Please interact with the user to understand the goal and purpose of this branch/worktree, then create a file at .worktree-local/context.md (which directory already exists and does not need to be created) that provides context for future Claude agents working in this worktree.
+
+CRITICAL: The context file should be BRIEF (20-200 words) and capture only the essential goals. Details available elsewhere (e.g., in a GitHub/Jira/Linear issue) should be REFERENCED not duplicated in the context file. Implementation details should not be included either.
+
+The context should include:
+- The branch purpose and goals but not implementation details
+- Links to related issues, PRs, or documentation
+- Any critical constraints or considerations
+
+Keep it concise - link to details rather than repeating them.
+
+Please start by asking the user about their goals for this branch.
+
+IMPORTANT: After you have created the context.md file, your task is complete. Do not continue the conversation or offer additional help."#,
     );
 
     out
