@@ -12,7 +12,7 @@ use crate::config::ensure_inside;
 
 /// Strip all leading `.` characters from `name`.
 /// e.g. `.env` → `env`, `..env` → `env`, `env` → `env`.
-pub fn strip_leading_dots(name: &str) -> &str {
+pub(crate) fn strip_leading_dots(name: &str) -> &str {
     name.trim_start_matches('.')
 }
 
@@ -37,6 +37,16 @@ pub fn create_symlinks(
     links: &[String],
 ) -> Result<()> {
     let worktree_link_dir = symlink_dir_base.join(name);
+
+    for link_source in links {
+        if link_source.is_empty() {
+            anyhow::bail!("symlink_links entry is empty");
+        }
+        if strip_leading_dots(link_source).is_empty() {
+            anyhow::bail!("symlink_links entry strips to empty name: '{link_source}'");
+        }
+    }
+
     std::fs::create_dir_all(&worktree_link_dir)
         .with_context(|| format!("creating symlink dir {}", worktree_link_dir.display()))?;
 
