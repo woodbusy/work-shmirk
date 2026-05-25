@@ -214,7 +214,7 @@ mod tests {
         std::fs::create_dir_all(&worktree_link_dir).unwrap();
         // Place a dummy symlink so the dir-exists check passes
         symlink(worktree_dir_placeholder(), worktree_link_dir.join("env")).ok();
-        for all_dot in &["..", "..."] {
+        for all_dot in &["..", "...", "."] {
             let links = vec![String::from(*all_dot)];
             let err = remove_symlinks(symlink_base.path(), "myworktree", &links).unwrap_err();
             let msg = err.to_string();
