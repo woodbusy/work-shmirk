@@ -65,7 +65,8 @@ and arrays from the local file replace those in the base. This matches `jq`'s
     ".env.template": ".env"
   },
 
-  // Per-worktree symlink directory. Leading "~" and "$HOME" are expanded.
+  // Per-worktree symlink directory. Leading "~", "$HOME", and "${HOME}" are
+  // expanded to the user's home directory. "~user" is not supported.
   // Empty string or omitted = feature disabled.
   "symlink_dir": "~/worktree-links",
 
