@@ -43,7 +43,11 @@ fn new_with_config_copies_files_creates_symlinks_and_renders_linear_prompt() {
     .unwrap();
     fs::write(cfg_dir.join(".env-src"), "ENV=ok").unwrap();
 
-    env.bin().args(["new", "ENG-42-foo"]).assert().success();
+    env.bin()
+        .env("TMUX", "fake,0,0")
+        .args(["new", "ENG-42-foo"])
+        .assert()
+        .success();
 
     let wt = env.worktrees_root().join("ENG-42-foo");
     assert!(
@@ -61,11 +65,12 @@ fn new_with_config_copies_files_creates_symlinks_and_renders_linear_prompt() {
     let meta = fs::symlink_metadata(&link_path).expect("symlink should exist");
     assert!(meta.file_type().is_symlink());
 
-    // Claude prompt should contain "ENG-42" and the linear fetch command.
-    let log = fs::read_to_string(&env.claude_log).unwrap();
-    assert!(log.contains("ENG-42"), "log missing ENG-42: {log}");
+    // The claude prompt is passed as a sh -c argument to the tmux split-window
+    // command. Verify it contains the expected issue ref and fetch command.
+    let log = fs::read_to_string(&env.tmux_log).unwrap();
+    assert!(log.contains("ENG-42"), "tmux log missing ENG-42: {log}");
     assert!(
         log.contains("linear issue view ENG-42"),
-        "log missing fetch cmd: {log}"
+        "tmux log missing fetch cmd: {log}"
     );
 }

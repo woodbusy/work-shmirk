@@ -20,8 +20,8 @@ work-shmirk remove [<worktree-name>]
 
 - `work-shmirk new feature-x` creates a new branch `feature-x`, adds a worktree
   for it alongside the main checkout, sets up `.worktree-local/`, optionally
-  runs `copy_files` / creates symlinks, and launches Claude (in a tmux 3-pane
-  layout when `$TMUX` is set, otherwise inline followed by `exec $SHELL`).
+  runs `copy_files` / creates symlinks, launches a tmux 3-pane layout when
+  `$TMUX` is set, and prints the new worktree path to stdout before exiting.
 - `work-shmirk new -e existing-branch` checks out an existing branch instead
   of creating one.
 - `work-shmirk remove feature-x` removes the symlinks, the worktree, and the
@@ -115,10 +115,20 @@ For testability the binary honors these env vars in all builds:
 These can redirect work-shmirk's subprocess calls — see
 [docs/contract.md](docs/contract.md) for the trust model.
 
-## Test-only env var
+## Shell wrapper
 
-- `WORK_SHMIRK_NO_EXEC=1` — in the inline (non-tmux) flow, skip the final
-  `exec $SHELL`. Only useful for integration tests.
+`work-shmirk new` prints the worktree path to stdout on success. A shell
+function can capture it to land in the new worktree automatically:
+
+```sh
+ws() {
+  local target
+  target=$(work-shmirk new "$@") && cd "$target"
+}
+```
+
+Add this to your shell's rc file. When inside tmux the 3-pane layout is set
+up as usual; when not in tmux the wrapper just `cd`s into the new worktree.
 
 ## Development
 

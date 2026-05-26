@@ -49,10 +49,9 @@ fn remove_takes_down_worktree_branch_and_symlinks() {
         "work-shmirk.owned-branch should be set to 'feature-x'"
     );
 
-    // git worktree remove refuses if there are untracked/modified files (this
-    // matches bash behavior too — the user normally commits or .gitignores
-    // .worktree-local/ etc.). Stage what we care about and remove the rest
-    // to keep this test focused on the removal flow itself.
+    // git worktree remove refuses if there are untracked/modified files.
+    // Stage what we care about and clean the rest to keep this test focused
+    // on the removal flow itself.
     std::process::Command::new("git")
         .args(["clean", "-fdx"])
         .current_dir(&wt)

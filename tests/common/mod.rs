@@ -26,9 +26,8 @@ impl TestEnv {
         let claude_log = stubs_dir.join("claude.log");
         let tmux_log = stubs_dir.join("tmux.log");
 
-        // Stub claude: log args (ignoring stdin) and exit 0. Also log the
-        // current working directory so tests can assert claude was launched
-        // from the worktree target (matches bash `cd <wt> && claude ...`).
+        // Stub claude: log args and exit 0. Also log the current working
+        // directory so tests can assert claude was launched from the worktree.
         let claude_script = format!(
             "#!/bin/sh\nprintf 'PWD=%s\\n' \"$PWD\" >> \"{log}\"\nfor a in \"$@\"; do printf '%s\\n' \"$a\" >> \"{log}\"; done\nexit 0\n",
             log = claude_log.display(),
@@ -99,14 +98,12 @@ impl TestEnv {
         }
     }
 
-    /// Build a `Command` for the binary under test with stubs and NO_EXEC set.
+    /// Build a `Command` for the binary under test with stubs wired in.
     pub fn bin(&self) -> assert_cmd::Command {
         let mut cmd = assert_cmd::Command::cargo_bin("work-shmirk").unwrap();
         cmd.current_dir(&self.repo_dir);
         cmd.env("WORK_SHMIRK_CLAUDE_BIN", self.stubs_dir.join("claude"));
         cmd.env("WORK_SHMIRK_TMUX_BIN", self.stubs_dir.join("tmux"));
-        cmd.env("WORK_SHMIRK_NO_EXEC", "1");
-        cmd.env("SHELL", "/bin/sh");
         // Ensure TMUX is NOT set unless a test explicitly opts in.
         cmd.env_remove("TMUX");
         cmd
