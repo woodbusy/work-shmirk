@@ -1,25 +1,10 @@
 //! Tmux 3-pane setup for the `new` flow.
 //!
-//! Deliberate divergences from the bash script:
-//!   1. Pane working directories are set via tmux `-c <dir>` (passed as an
-//!      argv element), so the worktree path never traverses a shell and
-//!      requires no shell escaping.
-//!   2. Pane commands are launched via `sh -c '<script>'` after `--`, not
-//!      typed as keystrokes via `send-keys`. This decouples behavior from the
-//!      user's interactive shell and eliminates the pane-payload injection
-//!      surface entirely.
-//!   3. The prompt is passed to `claude` as a single shell-escaped argument
-//!      inside the `sh -c` script (POSIX single-quote escaping). The claude
-//!      binary path is also shell-escaped for the same reason. These are the
-//!      only two user-derived strings that are interpolated into a shell
-//!      string.
-//!   4. The starting pane id is captured via `display-message -p '#{pane_id}'`
-//!      before the first split so we can target `respawn-pane` and `select-pane`
-//!      by id rather than by layout-relative names (`-L`, `-U`, `-D`).
-//!   5. The top-left pane is respawned via `respawn-pane -k` rather than
-//!      receiving `cd <dir>` keystrokes. Cost: the original pane's scrollback
-//!      is discarded; the new shell does not inherit in-process env mutations
-//!      from the original shell. See docs/contract.md.
+//! Layout: top-left shell, bottom-left claude, right vim — all cwd'd in the
+//! new worktree. Pane working directories flow through tmux `-c <dir>` (argv),
+//! never through a shell string. The claude prompt is the only user-derived
+//! value interpolated into a shell string and is POSIX-single-quote-escaped.
+//! See docs/contract.md for security design and trade-offs.
 
 use anyhow::{bail, Context, Result};
 use std::path::Path;

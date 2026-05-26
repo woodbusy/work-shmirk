@@ -82,7 +82,6 @@ pub fn create_symlinks(
 pub fn remove_symlinks(symlink_dir_base: &Path, name: &str, links: &[String]) -> Result<()> {
     let worktree_link_dir: PathBuf = symlink_dir_base.join(name);
 
-    // Bash echoes only when the dir/symlink exists.
     let dir_exists = worktree_link_dir.exists() || worktree_link_dir.symlink_metadata().is_ok();
     if !dir_exists {
         return Ok(());

@@ -1,11 +1,4 @@
 //! Clap-derived CLI definitions and worktree-name validation.
-//!
-//! The name validator rejects characters that are hostile on filesystems, in
-//! shell command lines against the worktree, or in branch names as seen by
-//! third-party tools. Since pane commands are now launched via direct tmux
-//! primitives (`split-window -c <dir> -- sh -c '...'`) rather than
-//! `send-keys`, tmux-injection is no longer the primary motivator — the
-//! validator is defense-in-depth rather than a load-bearing security control.
 
 use clap::{Parser, Subcommand};
 
@@ -45,13 +38,9 @@ pub enum Command {
 ///   - names containing `/` or `..` (must be a single path component)
 ///   - shell-metacharacters: `'`, `` ` ``, `$`, `\`, newline, any control char
 ///
-/// The character set was originally motivated by tmux `send-keys` injection
-/// prevention; with pane commands now using direct tmux primitives the
-/// worktree path never traverses a shell at all. The validator is retained as
-/// defense-in-depth: these characters are still problematic for filesystems,
-/// tool integrations that read branch names, and shells users run inside
-/// the worktree. Rejecting them up front produces a clear error before any
-/// subprocess runs.
+/// These characters are hostile on filesystems, in tool integrations that read
+/// branch names, and in shells users run inside the worktree. Rejecting them
+/// up front produces a clear error before any subprocess runs.
 pub fn parse_worktree_name(raw: &str) -> Result<String, String> {
     if raw.is_empty() {
         return Err("worktree name must not be empty".to_string());

@@ -1,9 +1,7 @@
-//! work-shmirk: a Rust port of the new-worktree/remove-worktree bash scripts.
+//! work-shmirk: git worktree manager with optional Claude and tmux integration.
 //!
-//! The crate is organized as a thin CLI dispatcher (`run`) plus a set of
-//! focused modules so the pure logic can be unit-tested in isolation. See
-//! `.worktree-local/context.md` and `.worktree-local/context_detail.md` for
-//! background.
+//! Organized as a thin CLI dispatcher (`run`) plus focused modules so the
+//! pure logic can be unit-tested in isolation.
 
 pub mod cli;
 pub mod config;

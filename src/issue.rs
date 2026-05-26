@@ -6,7 +6,7 @@
 //!   3. `issue-([0-9]{1,10})` (unanchored) — issue reference embedded in the name
 //!   4. `^([0-9]+)-`                  — leading number with dash
 //!
-//! Prefix case is preserved verbatim (bash uses `${BASH_REMATCH[1]}` directly).
+//! Prefix case is preserved verbatim from the branch name.
 
 use regex::Regex;
 use std::sync::OnceLock;

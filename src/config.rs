@@ -99,10 +99,9 @@ pub fn merge_values(base: serde_json::Value, overlay: serde_json::Value) -> serd
 /// Any `~` not immediately followed by `/` or end-of-string (e.g. `~alice/`)
 /// is an error — `~user`-style home-dir lookup is not supported.
 ///
-/// Mid-string occurrences of `~`, `$HOME`, or `${HOME}` are left literal
-/// (matches bash `${var/#\~/...}` semantics). The returned path is lexically
-/// normalized: redundant slashes and `./` segments are collapsed, but `..` is
-/// preserved as-is.
+/// Mid-string occurrences of `~`, `$HOME`, or `${HOME}` are left literal.
+/// The returned path is lexically normalized: redundant slashes and `./`
+/// segments are collapsed, but `..` is preserved as-is.
 ///
 /// Returns `Ok(None)` when `raw` is empty (feature disabled).
 pub fn expand_symlink_dir(raw: &str) -> Result<Option<PathBuf>> {
@@ -110,14 +109,9 @@ pub fn expand_symlink_dir(raw: &str) -> Result<Option<PathBuf>> {
     expand_symlink_dir_with_home(raw, &home)
 }
 
-/// Same as `expand_symlink_dir` but takes the home directory as an argument.
-/// Used by tests to avoid mutating the process-global `HOME` env var
-/// (which is shared across parallel tests in a single test binary).
-///
-/// Recognized leading tokens: `~`, `$HOME`, `${HOME}`. A `~` not followed by
-/// `/` or end-of-string is rejected with an error. Mid-string occurrences are
-/// left literal. The returned path is lexically normalized (no `//` or `./`
-/// segments) but `..` components are preserved.
+/// Same as `expand_symlink_dir` but takes the home directory as an argument,
+/// for use in tests that run in parallel (avoids mutating the process-global
+/// `HOME` env var).
 pub fn expand_symlink_dir_with_home(raw: &str, home: &str) -> Result<Option<PathBuf>> {
     if raw.is_empty() {
         return Ok(None);
@@ -166,8 +160,7 @@ pub fn expand_symlink_dir_with_home(raw: &str, home: &str) -> Result<Option<Path
 /// the path need not exist yet). Returns the normalized absolute-ish path on
 /// success; errors with a clear message on escape.
 ///
-/// This is the path-traversal guard for `copy_files` destinations and
-/// `symlink_links` entries. Bash performs neither check.
+/// Path-traversal guard for `copy_files` destinations and `symlink_links`.
 pub fn ensure_inside(base: &Path, candidate: &Path) -> Result<PathBuf> {
     let combined = if candidate.is_absolute() {
         candidate.to_path_buf()

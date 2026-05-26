@@ -1,6 +1,5 @@
 //! Copy files from `<config_dir>/<src>` into `<worktree_target>/<dest>` per
-//! `copy_files` config. Mirrors the bash `cp` loop, with added path-traversal
-//! validation on destinations.
+//! `copy_files` config, with path-traversal validation on destinations.
 
 use anyhow::{Context, Result};
 use std::collections::BTreeMap;
@@ -27,10 +26,8 @@ pub fn copy_files(
         ensure_inside(worktree_target, &dest_path)
             .with_context(|| format!("copy_files dest '{dest}' escapes worktree root"))?;
 
-        // Handle the bash-equivalent `dirname` edge case: `dirname "file"` →
-        // ".", and `mkdir -p .` is a no-op. In Rust, `Path::parent` of a bare
-        // filename returns Some("") which would trip create_dir_all. Skip if
-        // empty.
+        // `Path::parent` of a bare filename returns `Some("")`, which would
+        // trip `create_dir_all`. Skip if the parent component is empty.
         if let Some(parent) = Path::new(dest).parent() {
             if !parent.as_os_str().is_empty() {
                 let abs_parent = worktree_target.join(parent);

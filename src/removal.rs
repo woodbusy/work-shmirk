@@ -1,4 +1,4 @@
-//! Orchestrates the `remove` flow. Mirrors the bash `remove-worktree` script.
+//! Orchestrates the `remove` flow.
 
 use anyhow::{anyhow, Context, Result};
 use std::path::Path;
