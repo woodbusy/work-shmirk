@@ -25,8 +25,6 @@ fn remove_from_inside_worktree_defaults_to_basename() {
     cmd.current_dir(&wt);
     cmd.env("WORK_SHMIRK_CLAUDE_BIN", env.stubs_dir.join("claude"));
     cmd.env("WORK_SHMIRK_TMUX_BIN", env.stubs_dir.join("tmux"));
-    cmd.env("WORK_SHMIRK_NO_EXEC", "1");
-    cmd.env("SHELL", "/bin/sh");
     cmd.env_remove("TMUX");
     cmd.arg("remove");
     cmd.assert().success();

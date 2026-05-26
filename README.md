@@ -127,8 +127,9 @@ ws() {
 }
 ```
 
-Add this to your shell's rc file. When inside tmux the 3-pane layout is set
-up as usual; when not in tmux the wrapper just `cd`s into the new worktree.
+Add this to your shell's rc file. The shell wrapper `cd`s into the new
+worktree after `work-shmirk new` exits. When inside tmux a 3-pane layout is
+also set up.
 
 ## Development
 
