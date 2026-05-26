@@ -27,9 +27,19 @@ fn run_git_capture(cwd: &Path, args: &[&str]) -> Result<String> {
 }
 
 fn run_git_status(cwd: &Path, args: &[&str]) -> Result<()> {
+    // Route git's stdout to the binary's stderr so incidental git output
+    // (e.g. "HEAD is now at ...") does not pollute the binary's stdout, which
+    // the shell wrapper uses as a machine-readable path.  Both streams end up
+    // visible on the user's terminal in interactive use; only stdout is
+    // affected when the binary is run inside $(...).
+    use std::os::unix::io::AsFd;
+    let stderr_fd = std::io::stderr().as_fd().try_clone_to_owned()?;
     let status = Command::new(git_bin())
         .args(args)
         .current_dir(cwd)
+        .stdout(stderr_fd)
+        .stderr(Stdio::inherit())
+        .stdin(Stdio::null())
         .status()
         .with_context(|| format!("invoking git {}", args.join(" ")))?;
     if !status.success() {
