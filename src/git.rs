@@ -1,5 +1,7 @@
-//! Thin wrappers around the `git` CLI. Stdio is inherited so the user sees
-//! progress/errors directly. Each call takes a `cwd` so tests can drive it.
+//! Thin wrappers around the `git` CLI. Each call takes a `cwd` so tests can
+//! drive it without a process-wide chdir. For status (non-capturing) calls,
+//! git's stdout is routed to the binary's stderr so incidental git output
+//! does not pollute machine-readable stdout.
 
 use anyhow::{anyhow, bail, Context, Result};
 use std::path::{Path, PathBuf};
