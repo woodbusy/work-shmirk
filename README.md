@@ -63,7 +63,7 @@ and arrays from the local file replace those in the base. This matches `jq`'s
     // case-sensitive Linear or Jira CLI should configure `project` or use
     // canonical-case branch names. For "github" and other types, `project`
     // is unused.
-    "project": "ENG",
+    "project": "APPFOO",
     "cli": "linear",          // optional CLI for fetching issue details
     "skill": "linear-cli"     // optional Claude skill name
   },
@@ -84,13 +84,13 @@ and arrays from the local file replace those in the base. This matches `jq`'s
   // <symlink_dir>/<worktree-name>/. All leading dots are stripped from the
   // link name: ".env" → "env", "..env" → "env". Entries that are empty or
   // that strip to empty ("..", "...", etc.) are rejected with an error.
-  "symlink_links": [".env", ".envrc"],
+  "symlink_links": [".worktree-local", ".claude/skills"],
 
   // Tmux integration.
   "tmux": {
     // If both this and issues.project are set, the first occurrence of
     // issues.project in the window name is replaced with this string.
-    "project_name_substitution": "E"
+    "project_name_substitution": "AF"
   }
 }
 ```
