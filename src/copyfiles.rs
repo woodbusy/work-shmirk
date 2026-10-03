@@ -1,11 +1,15 @@
 //! Copy files from `<config_dir>/<src>` into `<worktree_target>/<dest>` per
 //! `copy_files` config, with path-traversal validation on destinations.
+//! Also copies the gitignored `.claude/dev-workflow.local.yaml` from the
+//! source worktree, which `copy_files` cannot reach.
 
 use anyhow::{Context, Result};
 use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::config::ensure_inside;
+
+const DEV_WORKFLOW_LOCAL_CONFIG: &str = ".claude/dev-workflow.local.yaml";
 
 pub fn copy_files(
     config_dir: &Path,
@@ -39,6 +43,28 @@ pub fn copy_files(
         std::fs::copy(&src_path, &dest_path)
             .with_context(|| format!("copying {} → {}", src_path.display(), dest_path.display()))?;
     }
+    Ok(())
+}
+
+/// Copy `.claude/dev-workflow.local.yaml` from the source worktree into the
+/// new worktree. Silently skipped when the source has no such file.
+pub fn copy_dev_workflow_config(source_root: &Path, worktree_target: &Path) -> Result<()> {
+    let source_path = source_root.join(DEV_WORKFLOW_LOCAL_CONFIG);
+    if !source_path.is_file() {
+        return Ok(());
+    }
+    let dest_path = worktree_target.join(DEV_WORKFLOW_LOCAL_CONFIG);
+    if let Some(dest_parent) = dest_path.parent() {
+        std::fs::create_dir_all(dest_parent)
+            .with_context(|| format!("creating {}", dest_parent.display()))?;
+    }
+    std::fs::copy(&source_path, &dest_path).with_context(|| {
+        format!(
+            "copying {} → {}",
+            source_path.display(),
+            dest_path.display()
+        )
+    })?;
     Ok(())
 }
 
@@ -107,5 +133,39 @@ mod tests {
         files.insert("a".to_string(), "../escape.txt".to_string());
         assert!(copy_files(&config_dir, &target, &files).is_err());
         assert!(!tmp.path().join("escape.txt").exists());
+    }
+
+    #[test]
+    fn dev_workflow_config_copied_into_new_claude_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source_root = tmp.path().join("src");
+        let target = tmp.path().join("wt");
+        std::fs::create_dir_all(source_root.join(".claude")).unwrap();
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(
+            source_root.join(DEV_WORKFLOW_LOCAL_CONFIG),
+            "backend: work\n",
+        )
+        .unwrap();
+
+        copy_dev_workflow_config(&source_root, &target).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(target.join(DEV_WORKFLOW_LOCAL_CONFIG)).unwrap(),
+            "backend: work\n"
+        );
+    }
+
+    #[test]
+    fn missing_dev_workflow_config_is_skipped() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source_root = tmp.path().join("src");
+        let target = tmp.path().join("wt");
+        std::fs::create_dir_all(&source_root).unwrap();
+        std::fs::create_dir_all(&target).unwrap();
+
+        copy_dev_workflow_config(&source_root, &target).unwrap();
+
+        assert!(!target.join(".claude").exists());
     }
 }

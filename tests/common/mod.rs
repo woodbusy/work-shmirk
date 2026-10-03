@@ -1,5 +1,6 @@
-//! Shared test scaffolding: throwaway git repo + stub binaries for `claude`
-//! and `tmux`. Pointed at via WORK_SHMIRK_{CLAUDE,TMUX}_BIN env vars.
+//! Shared test scaffolding: throwaway git repo + stub binaries for `claude`,
+//! `tmux`, and `personal-issues`. Pointed at via
+//! WORK_SHMIRK_{CLAUDE,TMUX,PERSONAL_ISSUES}_BIN env vars.
 
 #![allow(dead_code)]
 
@@ -11,6 +12,7 @@ pub struct TestEnv {
     pub stubs_dir: PathBuf,
     pub claude_log: PathBuf,
     pub tmux_log: PathBuf,
+    pub personal_issues_log: PathBuf,
     _tmp: tempfile::TempDir,
 }
 
@@ -25,6 +27,7 @@ impl TestEnv {
 
         let claude_log = stubs_dir.join("claude.log");
         let tmux_log = stubs_dir.join("tmux.log");
+        let personal_issues_log = stubs_dir.join("personal-issues.log");
 
         // Stub claude: log args and exit 0. Also log the current working
         // directory so tests can assert claude was launched from the worktree.
@@ -33,6 +36,14 @@ impl TestEnv {
             log = claude_log.display(),
         );
         write_executable(&stubs_dir.join("claude"), &claude_script);
+
+        // Stub personal-issues: same logging shape as the claude stub, plus a
+        // line on stdout so tests can check it does not leak into ours.
+        let personal_issues_script = format!(
+            "#!/bin/sh\nprintf 'PWD=%s\\n' \"$PWD\" >> \"{log}\"\nfor a in \"$@\"; do printf '%s\\n' \"$a\" >> \"{log}\"; done\necho personal-issues-stdout\nexit 0\n",
+            log = personal_issues_log.display(),
+        );
+        write_executable(&stubs_dir.join("personal-issues"), &personal_issues_script);
 
         // Stub tmux: log all argv elements (one per line) then append --end--.
         // For invocations that produce a pane id in real tmux (display-message
@@ -94,6 +105,7 @@ impl TestEnv {
             stubs_dir,
             claude_log,
             tmux_log,
+            personal_issues_log,
             _tmp: tmp,
         }
     }
@@ -104,6 +116,10 @@ impl TestEnv {
         cmd.current_dir(&self.repo_dir);
         cmd.env("WORK_SHMIRK_CLAUDE_BIN", self.stubs_dir.join("claude"));
         cmd.env("WORK_SHMIRK_TMUX_BIN", self.stubs_dir.join("tmux"));
+        cmd.env(
+            "WORK_SHMIRK_PERSONAL_ISSUES_BIN",
+            self.stubs_dir.join("personal-issues"),
+        );
         // Ensure TMUX is NOT set unless a test explicitly opts in.
         cmd.env_remove("TMUX");
         cmd

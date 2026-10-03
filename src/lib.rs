@@ -8,7 +8,7 @@ pub mod config;
 pub mod copyfiles;
 pub mod git;
 pub mod issue;
-pub mod prompt;
+pub mod personal_issues;
 pub mod removal;
 pub mod symlinks;
 pub mod tmux;

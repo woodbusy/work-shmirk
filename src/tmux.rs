@@ -2,8 +2,9 @@
 //!
 //! Layout: top-left shell, bottom-left claude, right vim — all cwd'd in the
 //! new worktree. Pane working directories flow through tmux `-c <dir>` (argv),
-//! never through a shell string. The claude prompt is the only user-derived
-//! value interpolated into a shell string and is POSIX-single-quote-escaped.
+//! never through a shell string. The claude binary path is the only
+//! configurable value interpolated into a shell string and is
+//! POSIX-single-quote-escaped.
 //! See docs/contract.md for security design and trade-offs.
 
 use anyhow::{bail, Context, Result};
@@ -52,16 +53,14 @@ fn run_tmux_capture(args: &[&str]) -> Result<String> {
 }
 
 /// Set up the 3-pane layout. `worktree_target` is the new worktree's absolute
-/// path; `prompt` is the full Claude prompt; `window_name` is the value to
-/// pass to `tmux rename-window`.
-pub fn setup_panes(worktree_target: &Path, prompt: &str, window_name: &str) -> Result<()> {
+/// path; `window_name` is the value to pass to `tmux rename-window`.
+pub fn setup_panes(worktree_target: &Path, window_name: &str) -> Result<()> {
     let target_str = worktree_target
         .to_str()
         .context("worktree path is not valid UTF-8")?;
 
     // Escape only the strings that live inside a `sh -c` payload. The
     // worktree path is passed via tmux `-c` (argv) and does not need escaping.
-    let prompt_q = shell_single_quote(prompt);
     let claude_q = shell_single_quote(&claude_bin());
 
     run_tmux(&["rename-window", window_name])?;
@@ -98,10 +97,10 @@ pub fn setup_panes(worktree_target: &Path, prompt: &str, window_name: &str) -> R
     // this select-pane, split-window -v would split the right pane instead.
     run_tmux(&["select-pane", "-t", &top_left_pane_id])?;
 
-    // Bottom-left pane: split the top-left vertically, launch claude with the
-    // prompt, then exec the user's shell so the pane stays alive after claude
-    // exits (`;` rather than `&&` — the user always lands in a shell).
-    let bottom_payload = format!("{claude_q} {prompt_q}; exec \"$SHELL\"");
+    // Bottom-left pane: split the top-left vertically, launch claude, then
+    // exec the user's shell so the pane stays alive after claude exits (`;`
+    // rather than `&&` — the user always lands in a shell).
+    let bottom_payload = format!("{claude_q}; exec \"$SHELL\"");
     let bottom_pane_id = run_tmux_capture(&[
         "split-window",
         "-v",

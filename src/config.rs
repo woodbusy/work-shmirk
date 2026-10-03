@@ -24,6 +24,8 @@ pub struct Settings {
     pub symlink_links: Option<Vec<String>>,
     #[serde(default)]
     pub tmux: Option<TmuxConfig>,
+    #[serde(default)]
+    pub personal_issues: bool,
 }
 
 #[derive(Debug, Default, Deserialize, Clone, PartialEq, Eq)]
@@ -33,10 +35,6 @@ pub struct IssuesConfig {
     pub type_: Option<String>,
     #[serde(default)]
     pub project: Option<String>,
-    #[serde(default)]
-    pub cli: Option<String>,
-    #[serde(default)]
-    pub skill: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize, Clone, PartialEq, Eq)]
@@ -510,11 +508,12 @@ mod tests {
     #[test]
     fn settings_fully_populated() {
         let value = json!({
-            "issues": {"type": "linear", "project": "ENG", "cli": "linear", "skill": "linear-cli"},
+            "issues": {"type": "linear", "project": "ENG"},
             "copy_files": {"src": "dest"},
             "symlink_dir": "~/links",
             "symlink_links": [".env"],
-            "tmux": {"project_name_substitution": "E"}
+            "tmux": {"project_name_substitution": "E"},
+            "personal_issues": true
         });
         let s: Settings = serde_json::from_value(value).unwrap();
         assert_eq!(s.issues.as_ref().unwrap().type_.as_deref(), Some("linear"));
@@ -524,5 +523,12 @@ mod tests {
             s.tmux.unwrap().project_name_substitution.as_deref(),
             Some("E")
         );
+        assert!(s.personal_issues);
+    }
+
+    #[test]
+    fn personal_issues_defaults_to_false() {
+        let s: Settings = serde_json::from_value(json!({})).unwrap();
+        assert!(!s.personal_issues);
     }
 }

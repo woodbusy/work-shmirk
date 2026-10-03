@@ -63,25 +63,17 @@ fn tmux_flow_uses_direct_primitives() {
     );
 
     // Bottom-left pane: vertical split with -c. The sh -c payload (logged as a
-    // single argv element) must contain the branch name in the prompt AND the
-    // shell-fallback sentinel that is unique to pane sh -c scripts.
+    // single argv element) launches claude with no arguments, then falls back
+    // to the user's shell.
     assert!(
         tmux_log.contains("-v"),
         "vertical split flag missing. log:\n{tmux_log}"
     );
-    // `exec "$SHELL"` only appears inside sh -c payloads, so its presence
-    // confirms the prompt was delivered as part of a pane command, not just
-    // via rename-window (which also logs "feature-tmux").
+    let claude_path = env.stubs_dir.join("claude");
+    let expected_bottom_payload = format!("'{}'; exec \"$SHELL\"", claude_path.display());
     assert!(
-        tmux_log.contains("exec \"$SHELL\""),
-        "sh -c payload with exec \"$SHELL\" missing from log. log:\n{tmux_log}"
-    );
-    // The branch name must appear in the log as part of the bottom-pane payload.
-    // Combined with the exec "$SHELL" check above this pinpoints the prompt
-    // to the split-window -v sh -c argument, not the rename-window call.
-    assert!(
-        tmux_log.contains("feature-tmux"),
-        "branch name missing from bottom-pane payload. log:\n{tmux_log}"
+        tmux_log.contains(&format!("\n{expected_bottom_payload}\n")),
+        "bottom-pane payload should be {expected_bottom_payload}. log:\n{tmux_log}"
     );
 
     // Top-left pane: respawned via respawn-pane -k.

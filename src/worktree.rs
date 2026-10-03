@@ -1,8 +1,9 @@
 //! Orchestrates the `new` flow.
 //!
 //! Steps: resolve source root + config, create worktree, set up
-//! `.worktree-local/` + symlinks + copy_files, optionally launch a tmux
-//! 3-pane layout, then print the new worktree path to stdout.
+//! `.worktree-local/` + symlinks + copy_files + the dev-workflow local
+//! config, optionally set up `personal-issues`, optionally launch a tmux 3-pane layout, then print the
+//! new worktree path to stdout.
 //!
 //! `git rev-parse --show-toplevel` returns the worktree path when run inside a
 //! worktree, so `.work-shmirk/` config follows the user into worktrees.
@@ -11,10 +12,10 @@ use anyhow::{Context, Result};
 use std::path::Path;
 
 use crate::config::{expand_symlink_dir, Settings};
-use crate::copyfiles::copy_files;
+use crate::copyfiles::{copy_dev_workflow_config, copy_files};
 use crate::git;
-use crate::issue::parse_issue;
-use crate::prompt::build_prompt;
+use crate::issue::{format_issue_id, parse_issue};
+use crate::personal_issues;
 use crate::symlinks::create_symlinks;
 use crate::tmux;
 
@@ -46,11 +47,16 @@ pub fn run_new(name: &str, existing: bool) -> Result<()> {
     if let Some(ref files) = settings.copy_files {
         copy_files(&config_dir, &target, files)?;
     }
+    copy_dev_workflow_config(&source_root, &target)?;
+
+    if settings.personal_issues {
+        let issue_id =
+            parse_issue(name).map(|issue| format_issue_id(&issue, settings.issues.as_ref()));
+        personal_issues::setup(&target, issue_id.as_deref())?;
+    }
 
     if std::env::var_os("TMUX").is_some() {
-        let issue = parse_issue(name);
-        let prompt = build_prompt(name, issue.as_ref(), settings.issues.as_ref());
-        run_tmux_flow(&settings, &target, name, &prompt)?;
+        run_tmux_flow(&settings, &target, name)?;
     }
 
     println!("{}", target.display());
@@ -77,7 +83,7 @@ fn setup_symlinks(settings: &Settings, target: &Path, name: &str) -> Result<()> 
     Ok(())
 }
 
-fn run_tmux_flow(settings: &Settings, target: &Path, name: &str, prompt: &str) -> Result<()> {
+fn run_tmux_flow(settings: &Settings, target: &Path, name: &str) -> Result<()> {
     // Window name: replace at most once (first occurrence only).
     let window_name = {
         let mut wn = name.to_string();
@@ -96,5 +102,5 @@ fn run_tmux_flow(settings: &Settings, target: &Path, name: &str, prompt: &str) -
         wn
     };
 
-    tmux::setup_panes(target, prompt, &window_name)
+    tmux::setup_panes(target, &window_name)
 }

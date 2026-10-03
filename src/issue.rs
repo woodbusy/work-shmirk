@@ -6,10 +6,13 @@
 //!   3. `issue-([0-9]{1,10})` (unanchored) — issue reference embedded in the name
 //!   4. `^([0-9]+)-`                  — leading number with dash
 //!
-//! Prefix case is preserved verbatim from the branch name.
+//! Prefix case is preserved verbatim from the branch name; `format_issue_id`
+//! applies `issues.project` case normalization at presentation time.
 
 use regex::Regex;
 use std::sync::OnceLock;
+
+use crate::config::IssuesConfig;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IssueRef {
@@ -73,6 +76,37 @@ pub fn parse_issue(name: &str) -> Option<IssueRef> {
         });
     }
     None
+}
+
+/// Render an issue reference as the tracker id passed to
+/// `personal-issues set-current`, per `issues.type`:
+///   - `github` → the bare number
+///   - `linear` | `jira` → `<prefix>-<number>`, with the configured
+///     `issues.project` spelling substituted when the branch prefix matches it
+///     case-insensitively, and used as the fallback when the branch has none
+///   - anything else (or no `issues` config) → the verbatim branch prefix and
+///     number, or the bare number when there is no prefix
+pub fn format_issue_id(issue: &IssueRef, issues_cfg: Option<&IssuesConfig>) -> String {
+    let issue_type = issues_cfg.and_then(|cfg| cfg.type_.as_deref());
+    let configured_project = issues_cfg
+        .and_then(|cfg| cfg.project.as_deref())
+        .filter(|project| !project.is_empty());
+    let branch_prefix = issue.prefix.as_deref().filter(|prefix| !prefix.is_empty());
+
+    let prefix = match issue_type {
+        Some("github") => None,
+        Some("linear" | "jira") => match (branch_prefix, configured_project) {
+            (Some(branch), Some(project)) if branch.eq_ignore_ascii_case(project) => Some(project),
+            (Some(branch), _) => Some(branch),
+            (None, project) => project,
+        },
+        _ => branch_prefix,
+    };
+
+    match prefix {
+        Some(prefix) => format!("{prefix}-{}", issue.number),
+        None => issue.number.to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -153,5 +187,78 @@ mod tests {
         let r = parse_issue("Eng-1-foo").unwrap();
         assert_eq!(r.prefix.as_deref(), Some("Eng"));
         assert_eq!(r.number, 1);
+    }
+
+    fn issues_cfg(issue_type: Option<&str>, project: Option<&str>) -> IssuesConfig {
+        IssuesConfig {
+            type_: issue_type.map(String::from),
+            project: project.map(String::from),
+        }
+    }
+
+    fn issue_ref(prefix: Option<&str>, number: u32) -> IssueRef {
+        IssueRef {
+            prefix: prefix.map(String::from),
+            number,
+        }
+    }
+
+    #[test]
+    fn format_github_uses_bare_number() {
+        let cfg = issues_cfg(Some("github"), None);
+        assert_eq!(format_issue_id(&issue_ref(None, 42), Some(&cfg)), "42");
+    }
+
+    #[test]
+    fn format_linear_normalizes_prefix_to_config_case() {
+        let cfg = issues_cfg(Some("linear"), Some("ENG"));
+        assert_eq!(
+            format_issue_id(&issue_ref(Some("eng"), 42), Some(&cfg)),
+            "ENG-42"
+        );
+    }
+
+    #[test]
+    fn format_linear_preserves_non_matching_prefix() {
+        let cfg = issues_cfg(Some("linear"), Some("ENG"));
+        assert_eq!(
+            format_issue_id(&issue_ref(Some("gh"), 42), Some(&cfg)),
+            "gh-42"
+        );
+    }
+
+    #[test]
+    fn format_linear_with_prefix_and_no_configured_project_uses_verbatim_prefix() {
+        let cfg = issues_cfg(Some("linear"), None);
+        assert_eq!(
+            format_issue_id(&issue_ref(Some("eng"), 7), Some(&cfg)),
+            "eng-7"
+        );
+    }
+
+    #[test]
+    fn format_jira_falls_back_to_configured_project() {
+        let cfg = issues_cfg(Some("jira"), Some("PROJ"));
+        assert_eq!(format_issue_id(&issue_ref(None, 5), Some(&cfg)), "PROJ-5");
+    }
+
+    #[test]
+    fn format_linear_without_prefix_or_project_uses_number() {
+        let cfg = issues_cfg(Some("linear"), None);
+        assert_eq!(format_issue_id(&issue_ref(None, 7), Some(&cfg)), "7");
+    }
+
+    #[test]
+    fn format_other_type_uses_verbatim_prefix() {
+        let cfg = issues_cfg(Some("custom"), Some("FOO"));
+        assert_eq!(
+            format_issue_id(&issue_ref(Some("foo"), 9), Some(&cfg)),
+            "foo-9"
+        );
+    }
+
+    #[test]
+    fn format_without_issues_config_uses_verbatim_prefix() {
+        assert_eq!(format_issue_id(&issue_ref(Some("ENG"), 1), None), "ENG-1");
     }
 }

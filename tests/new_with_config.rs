@@ -4,11 +4,11 @@ use common::TestEnv;
 use std::fs;
 
 #[test]
-fn new_with_config_copies_files_creates_symlinks_and_renders_linear_prompt() {
+fn new_with_config_copies_files_and_creates_symlinks() {
     let env = TestEnv::new();
 
     // Set up .work-shmirk config with copy_files, symlink_dir, symlink_links,
-    // and linear issue type.
+    // and tmux window-name substitution.
     let cfg_dir = env.repo_dir.join(".work-shmirk");
     fs::create_dir_all(&cfg_dir).unwrap();
 
@@ -32,8 +32,10 @@ fn new_with_config_copies_files_creates_symlinks_and_renders_linear_prompt() {
         "symlink_links": [".env"],
         "issues": {
             "type": "linear",
-            "project": "ENG",
-            "cli": "linear"
+            "project": "ENG"
+        },
+        "tmux": {
+            "project_name_substitution": "E"
         }
     });
     fs::write(
@@ -65,12 +67,10 @@ fn new_with_config_copies_files_creates_symlinks_and_renders_linear_prompt() {
     let meta = fs::symlink_metadata(&link_path).expect("symlink should exist");
     assert!(meta.file_type().is_symlink());
 
-    // The claude prompt is passed as a sh -c argument to the tmux split-window
-    // command. Verify it contains the expected issue ref and fetch command.
+    // The window name has its first `issues.project` occurrence substituted.
     let log = fs::read_to_string(&env.tmux_log).unwrap();
-    assert!(log.contains("ENG-42"), "tmux log missing ENG-42: {log}");
     assert!(
-        log.contains("linear issue view ENG-42"),
-        "tmux log missing fetch cmd: {log}"
+        log.contains("rename-window\nE-42-foo\n"),
+        "tmux log missing substituted window name: {log}"
     );
 }
