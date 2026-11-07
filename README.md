@@ -100,7 +100,18 @@ and arrays from the local file replace those in the base. This matches `jq`'s
   // reference. A non-zero exit fails `new`. (`.claude/dev-workflow.local.yaml`
   // is always copied into the new worktree beforehand, regardless of this
   // setting.)
-  "personal_issues": false
+  "personal_issues": false,
+
+  // Claude launch settings. Prefer putting this in settings.local.json.
+  "claude": {
+    // 1Password secret reference (must start with `op://`) holding a
+    // service account token. When set, the bottom-left pane runs
+    // `op read <ref>`, exports the result as OP_SERVICE_ACCOUNT_TOKEN for
+    // claude only, and starts claude. If the read fails or is empty, claude
+    // is not started and you land in your shell. Requires the `op` CLI
+    // signed in to your own 1Password account.
+    "op_token_ref": "op://Private/claude-service-account/credential"
+  }
 }
 ```
 
@@ -113,6 +124,15 @@ binary validates containment before deleting, but you should still only
 [docs/contract.md](docs/contract.md) for the full trust model and the
 load-bearing behaviors maintainers should preserve.
 
+### 1Password service account token
+
+With `claude.op_token_ref` set, anything claude runs (including Bash tool
+calls) inherits `OP_SERVICE_ACCOUNT_TOKEN`, so scope the service account to
+only the vault Claude needs. The variable is unset again when claude exits, so
+the shell you land in afterwards does not keep it. Keep the setting in
+`settings.local.json`: a reference supplied by a committed `settings.json`
+could point at any item you can read.
+
 ## Binary override env vars
 
 For testability the binary honors these env vars in all builds:
@@ -122,6 +142,7 @@ For testability the binary honors these env vars in all builds:
 - `WORK_SHMIRK_GIT_BIN` — path to the `git` binary (default: `git`)
 - `WORK_SHMIRK_PERSONAL_ISSUES_BIN` — path to the `personal-issues` binary
   (default: `personal-issues`)
+- `WORK_SHMIRK_OP_BIN` — path to the 1Password `op` binary (default: `op`)
 
 These can redirect work-shmirk's subprocess calls — see
 [docs/contract.md](docs/contract.md) for the trust model.

@@ -26,6 +26,16 @@ pub struct Settings {
     pub tmux: Option<TmuxConfig>,
     #[serde(default)]
     pub personal_issues: bool,
+    #[serde(default)]
+    pub claude: Option<ClaudeConfig>,
+}
+
+#[derive(Debug, Default, Deserialize, Clone, PartialEq, Eq)]
+pub struct ClaudeConfig {
+    /// 1Password secret reference (`op://vault/item/field`) whose value is
+    /// exported as `OP_SERVICE_ACCOUNT_TOKEN` in the pane that runs claude.
+    #[serde(default)]
+    pub op_token_ref: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize, Clone, PartialEq, Eq)]
@@ -41,6 +51,22 @@ pub struct IssuesConfig {
 pub struct TmuxConfig {
     #[serde(default)]
     pub project_name_substitution: Option<String>,
+}
+
+/// Validate a 1Password secret reference. It must start with `op://` and
+/// contain no control characters (which includes newlines).
+pub fn validate_op_token_ref(reference: &str) -> Result<()> {
+    if !reference.starts_with("op://") || reference.len() == "op://".len() {
+        return Err(anyhow!(
+            "claude.op_token_ref must be a 1Password secret reference starting with 'op://'"
+        ));
+    }
+    if reference.chars().any(char::is_control) {
+        return Err(anyhow!(
+            "claude.op_token_ref must not contain control characters"
+        ));
+    }
+    Ok(())
 }
 
 /// Load and merge settings from `<config_dir>/settings.json` and

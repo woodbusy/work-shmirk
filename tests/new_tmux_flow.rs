@@ -129,3 +129,52 @@ fn tmux_flow_uses_direct_primitives() {
         "send-keys should not appear in the new flow. log:\n{tmux_log}"
     );
 }
+
+#[test]
+fn op_token_ref_is_passed_in_bottom_pane_script_only() {
+    let env = TestEnv::new();
+    let config_dir = env.repo_dir.join(".work-shmirk");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    std::fs::write(
+        config_dir.join("settings.local.json"),
+        r#"{"claude": {"op_token_ref": "op://Private/claude-sa/credential"}}"#,
+    )
+    .unwrap();
+
+    env.bin()
+        .env("TMUX", "fake,0,0")
+        .env("WORK_SHMIRK_OP_BIN", "/stub/op")
+        .args(["new", "feature-op"])
+        .assert()
+        .success();
+
+    let tmux_log = std::fs::read_to_string(&env.tmux_log).unwrap();
+    assert!(
+        tmux_log.contains("'/stub/op' read 'op://Private/claude-sa/credential'"),
+        "op read missing from bottom-pane script. log:\n{tmux_log}"
+    );
+    assert!(
+        tmux_log.contains("export OP_SERVICE_ACCOUNT_TOKEN"),
+        "export missing. log:\n{tmux_log}"
+    );
+}
+
+#[test]
+fn invalid_op_token_ref_fails_before_creating_worktree() {
+    let env = TestEnv::new();
+    let config_dir = env.repo_dir.join(".work-shmirk");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    std::fs::write(
+        config_dir.join("settings.local.json"),
+        r#"{"claude": {"op_token_ref": "not-an-op-ref"}}"#,
+    )
+    .unwrap();
+
+    env.bin()
+        .args(["new", "feature-bad-ref"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("op://"));
+
+    assert!(!env.worktrees_root().join("feature-bad-ref").exists());
+}

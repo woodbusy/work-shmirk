@@ -25,6 +25,9 @@ pub fn run_new(name: &str, existing: bool) -> Result<()> {
     let source_root = git::show_toplevel(&cwd)?;
     let config_dir = source_root.join(".work-shmirk");
     let settings = crate::config::load(&config_dir)?;
+    if let Some(reference) = op_token_ref(&settings) {
+        crate::config::validate_op_token_ref(reference)?;
+    }
 
     let worktrees_root = git::worktrees_root(&cwd)?;
     let target = worktrees_root.join(name);
@@ -61,6 +64,14 @@ pub fn run_new(name: &str, existing: bool) -> Result<()> {
 
     println!("{}", target.display());
     Ok(())
+}
+
+fn op_token_ref(settings: &Settings) -> Option<&str> {
+    settings
+        .claude
+        .as_ref()
+        .and_then(|claude| claude.op_token_ref.as_deref())
+        .filter(|reference| !reference.is_empty())
 }
 
 fn setup_worktree_local(target: &Path) -> Result<()> {
@@ -102,5 +113,5 @@ fn run_tmux_flow(settings: &Settings, target: &Path, name: &str) -> Result<()> {
         wn
     };
 
-    tmux::setup_panes(target, &window_name)
+    tmux::setup_panes(target, &window_name, op_token_ref(settings))
 }

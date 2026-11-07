@@ -4,7 +4,9 @@
 //! new worktree. Pane working directories flow through tmux `-c <dir>` (argv),
 //! never through a shell string. The claude binary path is the only
 //! configurable value interpolated into a shell string and is
-//! POSIX-single-quote-escaped.
+//! POSIX-single-quote-escaped. The same applies to the optional 1Password
+//! token reference and the `op` binary path; the token itself is fetched by
+//! the pane's own shell and never passes through this process or tmux argv.
 //! See docs/contract.md for security design and trade-offs.
 
 use anyhow::{bail, Context, Result};
@@ -17,6 +19,10 @@ fn tmux_bin() -> String {
 
 fn claude_bin() -> String {
     std::env::var("WORK_SHMIRK_CLAUDE_BIN").unwrap_or_else(|_| "claude".to_string())
+}
+
+fn op_bin() -> String {
+    std::env::var("WORK_SHMIRK_OP_BIN").unwrap_or_else(|_| "op".to_string())
 }
 
 /// POSIX single-quote escape: surround in `'...'`, with each interior `'`
@@ -52,9 +58,39 @@ fn run_tmux_capture(args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+/// Build the bottom-left pane's `sh -c` script. With a token reference, the
+/// script reads the secret via `op read` (ignoring any inherited service
+/// account token so the user's own 1Password session is used), exports it as
+/// `OP_SERVICE_ACCOUNT_TOKEN` for claude only, and drops to the user's shell
+/// without launching claude if the read fails or yields nothing.
+fn bottom_pane_script(claude_q: &str, op_bin: &str, op_token_ref: Option<&str>) -> String {
+    let Some(reference) = op_token_ref else {
+        return format!("{claude_q}; exec \"$SHELL\"");
+    };
+    let op_q = shell_single_quote(op_bin);
+    let reference_q = shell_single_quote(reference);
+    format!(
+        concat!(
+            "token=$(unset OP_SERVICE_ACCOUNT_TOKEN; {op_q} read {reference_q}) && [ -n \"$token\" ] || ",
+            "{{ echo 'work-shmirk: could not read OP_SERVICE_ACCOUNT_TOKEN from 1Password; not starting claude' >&2; exec \"$SHELL\"; }}; ",
+            "OP_SERVICE_ACCOUNT_TOKEN=$token; export OP_SERVICE_ACCOUNT_TOKEN; unset token; ",
+            "{claude_q}; unset OP_SERVICE_ACCOUNT_TOKEN; exec \"$SHELL\"",
+        ),
+        op_q = op_q,
+        reference_q = reference_q,
+        claude_q = claude_q,
+    )
+}
+
 /// Set up the 3-pane layout. `worktree_target` is the new worktree's absolute
 /// path; `window_name` is the value to pass to `tmux rename-window`.
-pub fn setup_panes(worktree_target: &Path, window_name: &str) -> Result<()> {
+/// `op_token_ref`, when set, is a validated `op://` reference exported as
+/// `OP_SERVICE_ACCOUNT_TOKEN` for the claude process.
+pub fn setup_panes(
+    worktree_target: &Path,
+    window_name: &str,
+    op_token_ref: Option<&str>,
+) -> Result<()> {
     let target_str = worktree_target
         .to_str()
         .context("worktree path is not valid UTF-8")?;
@@ -100,7 +136,7 @@ pub fn setup_panes(worktree_target: &Path, window_name: &str) -> Result<()> {
     // Bottom-left pane: split the top-left vertically, launch claude, then
     // exec the user's shell so the pane stays alive after claude exits (`;`
     // rather than `&&` — the user always lands in a shell).
-    let bottom_payload = format!("{claude_q}; exec \"$SHELL\"");
+    let bottom_payload = bottom_pane_script(&claude_q, &op_bin(), op_token_ref);
     let bottom_pane_id = run_tmux_capture(&[
         "split-window",
         "-v",
@@ -160,5 +196,79 @@ mod tests {
     #[test]
     fn quote_empty() {
         assert_eq!(shell_single_quote(""), "''");
+    }
+
+    #[test]
+    fn script_without_reference_runs_claude_then_shell() {
+        assert_eq!(
+            bottom_pane_script("'claude'", "op", None),
+            "'claude'; exec \"$SHELL\""
+        );
+    }
+
+    #[test]
+    fn script_with_reference_quotes_it_and_skips_claude_on_failure() {
+        let script = bottom_pane_script("'claude'", "op", Some("op://v/it'em/f"));
+        assert!(script.contains("read 'op://v/it'\\''em/f')"));
+        assert!(script.contains("not starting claude"));
+        assert!(script.contains("export OP_SERVICE_ACCOUNT_TOKEN; unset token; 'claude';"));
+    }
+
+    /// Run the generated script under `sh` with stub `op`/`claude`/shell
+    /// binaries and return what claude and the final shell observed.
+    fn run_script(op_body: &str) -> (String, String, String) {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let write = |name: &str, body: &str| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            path
+        };
+        let op = write("op", op_body);
+        let claude = write(
+            "claude",
+            "echo \"claude:${OP_SERVICE_ACCOUNT_TOKEN-unset}\"",
+        );
+        let shell = write("shell", "echo \"shell:${OP_SERVICE_ACCOUNT_TOKEN-unset}\"");
+        let script = bottom_pane_script(
+            &shell_single_quote(claude.to_str().unwrap()),
+            op.to_str().unwrap(),
+            Some("op://vault/item/credential"),
+        );
+        let output = Command::new("sh")
+            .args(["-c", &script])
+            .env("SHELL", &shell)
+            .env("OP_SERVICE_ACCOUNT_TOKEN", "stale")
+            .output()
+            .unwrap();
+        (
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+            script,
+        )
+    }
+
+    #[test]
+    fn script_exports_token_to_claude_only() {
+        let (stdout, _, script) = run_script(
+            "[ -z \"$OP_SERVICE_ACCOUNT_TOKEN\" ] && [ \"$1\" = read ] && [ \"$2\" = op://vault/item/credential ] && echo s3cret",
+        );
+        assert_eq!(stdout, "claude:s3cret\nshell:unset\n");
+        assert!(!script.contains("s3cret"));
+    }
+
+    #[test]
+    fn script_skips_claude_when_op_fails() {
+        let (stdout, stderr, _) = run_script("exit 1");
+        assert_eq!(stdout, "shell:stale\n");
+        assert!(stderr.contains("not starting claude"));
+    }
+
+    #[test]
+    fn script_skips_claude_when_op_returns_nothing() {
+        let (stdout, stderr, _) = run_script("exit 0");
+        assert_eq!(stdout, "shell:stale\n");
+        assert!(stderr.contains("not starting claude"));
     }
 }
