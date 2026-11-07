@@ -82,6 +82,11 @@ fn bottom_pane_script(claude_q: &str, op_bin: &str, op_token_ref: Option<&str>) 
     )
 }
 
+/// The claude pane lives in the left column, so giving vim 30% of the width
+/// leaves the claude pane about 70% of the window width.
+const VIM_PANE_WIDTH: &str = "30%";
+const CLAUDE_PANE_HEIGHT: &str = "70%";
+
 /// Set up the 3-pane layout. `worktree_target` is the new worktree's absolute
 /// path; `window_name` is the value to pass to `tmux rename-window`.
 /// `op_token_ref`, when set, is a validated `op://` reference exported as
@@ -114,6 +119,8 @@ pub fn setup_panes(
     let right_pane_id = run_tmux_capture(&[
         "split-window",
         "-h",
+        "-l",
+        VIM_PANE_WIDTH,
         "-P",
         "-F",
         "#{pane_id}",
@@ -140,6 +147,8 @@ pub fn setup_panes(
     let bottom_pane_id = run_tmux_capture(&[
         "split-window",
         "-v",
+        "-l",
+        CLAUDE_PANE_HEIGHT,
         "-P",
         "-F",
         "#{pane_id}",
