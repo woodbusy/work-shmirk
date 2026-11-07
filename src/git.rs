@@ -55,6 +55,19 @@ pub fn show_toplevel(cwd: &Path) -> Result<PathBuf> {
     Ok(PathBuf::from(s))
 }
 
+/// Whether `relative_path` (relative to `repo_root`) is in the index of the
+/// repository at `repo_root`. The path is matched literally, not as a glob.
+pub fn is_tracked(repo_root: &Path, relative_path: &Path) -> Result<bool> {
+    let path_str = relative_path
+        .to_str()
+        .ok_or_else(|| anyhow!("path is not valid UTF-8: {}", relative_path.display()))?;
+    let listed = run_git_capture(
+        repo_root,
+        &["--literal-pathspecs", "ls-files", "--", path_str],
+    )?;
+    Ok(!listed.is_empty())
+}
+
 pub fn git_common_dir(cwd: &Path) -> Result<PathBuf> {
     let s = run_git_capture(cwd, &["rev-parse", "--git-common-dir"])?;
     let path = PathBuf::from(&s);

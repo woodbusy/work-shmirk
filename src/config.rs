@@ -1,13 +1,11 @@
-//! Config loading, deep-merge, and path-containment helpers.
+//! Config loading and path-containment helpers.
 //!
-//! Config lives in `<repo>/.work-shmirk/`:
-//!   - `settings.json`        — committed defaults
-//!   - `settings.local.json`  — gitignored per-user overrides
-//!
-//! Merge semantics match jq's `*` operator: recursive object merge, scalars
-//! and arrays in the local file replace those in the base.
+//! Config lives in `<worktree>/.work-shmirk/settings.json`. It is personal
+//! configuration and must not be tracked by git, so a repository cannot ship
+//! settings that drive work-shmirk on a user's machine.
 
-use anyhow::{anyhow, Context, Result};
+use crate::git;
+use anyhow::{anyhow, bail, Context, Result};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
@@ -69,49 +67,77 @@ pub fn validate_op_token_ref(reference: &str) -> Result<()> {
     Ok(())
 }
 
-/// Load and merge settings from `<config_dir>/settings.json` and
-/// `<config_dir>/settings.local.json`. Either or both may be absent.
+const SETTINGS_FILE: &str = "settings.json";
+const LEGACY_LOCAL_SETTINGS_FILE: &str = "settings.local.json";
+
+/// Load settings from `<config_dir>/settings.json`, where `config_dir` is
+/// `<worktree>/.work-shmirk`.
 ///
-/// If `config_dir` does not exist, returns the default settings (all None).
+/// Returns the default settings (all None) when the directory or file is
+/// absent. Errors when the file is tracked by git, or when a legacy
+/// `settings.local.json` is present.
 pub fn load(config_dir: &Path) -> Result<Settings> {
     if !config_dir.exists() {
         return Ok(Settings::default());
     }
-    let base = read_optional_json(&config_dir.join("settings.json"))?;
-    let local = read_optional_json(&config_dir.join("settings.local.json"))?;
-    let merged = merge_values(base, local);
-    let settings: Settings = serde_json::from_value(merged)
-        .with_context(|| format!("parsing settings under {}", config_dir.display()))?;
+    let legacy_path = config_dir.join(LEGACY_LOCAL_SETTINGS_FILE);
+    if legacy_path.exists() {
+        bail!(
+            "{} is no longer supported; work-shmirk now reads a single, untracked {}. \
+             Move its contents into {} and delete it",
+            legacy_path.display(),
+            SETTINGS_FILE,
+            config_dir.join(SETTINGS_FILE).display()
+        );
+    }
+    let settings_path = config_dir.join(SETTINGS_FILE);
+    if !settings_path.exists() {
+        return Ok(Settings::default());
+    }
+    ensure_untracked(config_dir, &settings_path)?;
+    let content = std::fs::read_to_string(&settings_path)
+        .with_context(|| format!("reading {}", settings_path.display()))?;
+    let settings: Settings = serde_json::from_str(&content)
+        .with_context(|| format!("parsing settings in {}", settings_path.display()))?;
     Ok(settings)
 }
 
-fn read_optional_json(path: &Path) -> Result<serde_json::Value> {
-    if !path.exists() {
-        return Ok(serde_json::Value::Object(serde_json::Map::new()));
-    }
-    let content =
-        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    let value: serde_json::Value = serde_json::from_str(&content)
-        .with_context(|| format!("parsing JSON in {}", path.display()))?;
-    Ok(value)
-}
+/// Refuse settings that the worktree's repository tracks. Checks both the
+/// path as named and the path after resolving symlinks, so a tracked symlink
+/// (or a `.work-shmirk` symlink into a tracked directory) cannot smuggle in
+/// repository-supplied settings. A resolved path outside the repository is
+/// not checked: it cannot be content the repository supplies.
+fn ensure_untracked(config_dir: &Path, settings_path: &Path) -> Result<()> {
+    let worktree_dir = config_dir
+        .parent()
+        .ok_or_else(|| anyhow!("config dir {} has no parent", config_dir.display()))?;
+    let repo_root = git::show_toplevel(worktree_dir)?
+        .canonicalize()
+        .context("resolving repository root")?;
+    let as_named = worktree_dir
+        .canonicalize()
+        .with_context(|| format!("resolving {}", worktree_dir.display()))?
+        .join(config_dir.file_name().unwrap_or_default())
+        .join(SETTINGS_FILE);
+    let resolved = settings_path
+        .canonicalize()
+        .with_context(|| format!("resolving {}", settings_path.display()))?;
 
-/// Recursive deep-merge: objects merge key-wise, everything else (scalars,
-/// arrays, mismatched types) is replaced by the rhs value.
-pub fn merge_values(base: serde_json::Value, overlay: serde_json::Value) -> serde_json::Value {
-    use serde_json::Value;
-    match (base, overlay) {
-        (Value::Object(mut a), Value::Object(b)) => {
-            for (k, v_overlay) in b {
-                let v_base = a.remove(&k).unwrap_or(Value::Null);
-                a.insert(k, merge_values(v_base, v_overlay));
-            }
-            Value::Object(a)
+    for candidate in [&as_named, &resolved] {
+        let Ok(relative) = candidate.strip_prefix(&repo_root) else {
+            continue;
+        };
+        if git::is_tracked(&repo_root, relative)? {
+            bail!(
+                "refusing to load {}: it is tracked by git. work-shmirk settings are \
+                 personal and must stay untracked so a repository cannot configure \
+                 work-shmirk on your machine. Untrack it with `git rm --cached` or \
+                 delete it",
+                settings_path.display()
+            );
         }
-        // Treat overlay-null specially: if the overlay key is explicitly null,
-        // we still want it to overwrite (matches jq's `*` operator).
-        (_, overlay) => overlay,
     }
+    Ok(())
 }
 
 /// Expand a `symlink_dir` config string. The following leading tokens are
@@ -250,48 +276,6 @@ pub fn ensure_inside(base: &Path, candidate: &Path) -> Result<PathBuf> {
 mod tests {
     use super::*;
     use serde_json::json;
-
-    #[test]
-    fn merge_base_only() {
-        let base = json!({"a": 1, "b": {"c": 2}});
-        let overlay = json!({});
-        assert_eq!(merge_values(base.clone(), overlay), base);
-    }
-
-    #[test]
-    fn merge_local_only() {
-        let base = json!({});
-        let overlay = json!({"a": 1});
-        assert_eq!(merge_values(base, overlay.clone()), overlay);
-    }
-
-    #[test]
-    fn merge_deep() {
-        let base = json!({"issues": {"type": "linear", "project": "ENG"}, "x": 1});
-        let overlay = json!({"issues": {"cli": "linear"}, "x": 2});
-        let merged = merge_values(base, overlay);
-        assert_eq!(
-            merged,
-            json!({"issues": {"type": "linear", "project": "ENG", "cli": "linear"}, "x": 2})
-        );
-    }
-
-    #[test]
-    fn merge_null_overlay_overwrites_base() {
-        // Documented quirk: an explicit `null` in the overlay overwrites the
-        // base value (matches jq's `*` operator).
-        let base = json!({"a": 1});
-        let overlay = json!({"a": null});
-        assert_eq!(merge_values(base, overlay), json!({"a": null}));
-    }
-
-    #[test]
-    fn merge_arrays_replace() {
-        let base = json!({"symlink_links": [".a", ".b"]});
-        let overlay = json!({"symlink_links": [".c"]});
-        let merged = merge_values(base, overlay);
-        assert_eq!(merged, json!({"symlink_links": [".c"]}));
-    }
 
     #[test]
     fn expand_tilde_prefix() {

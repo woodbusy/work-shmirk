@@ -136,7 +136,7 @@ fn op_token_ref_is_passed_in_bottom_pane_script_only() {
     let config_dir = env.repo_dir.join(".work-shmirk");
     std::fs::create_dir_all(&config_dir).unwrap();
     std::fs::write(
-        config_dir.join("settings.local.json"),
+        config_dir.join("settings.json"),
         r#"{"claude": {"op_token_ref": "op://Private/claude-sa/credential"}}"#,
     )
     .unwrap();
@@ -165,7 +165,7 @@ fn invalid_op_token_ref_fails_before_creating_worktree() {
     let config_dir = env.repo_dir.join(".work-shmirk");
     std::fs::create_dir_all(&config_dir).unwrap();
     std::fs::write(
-        config_dir.join("settings.local.json"),
+        config_dir.join("settings.json"),
         r#"{"claude": {"op_token_ref": "not-an-op-ref"}}"#,
     )
     .unwrap();

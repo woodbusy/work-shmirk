@@ -27,9 +27,9 @@ cargo install --path .                       # install the work-shmirk binary
 
 The crate splits a thin CLI dispatcher (`lib.rs::run` → `cli.rs`) from per-concern modules so each can be unit-tested in isolation:
 
-- `worktree.rs` orchestrates the `new` flow; `removal.rs` orchestrates `remove`. These are the only modules that compose the others.
+- `worktree.rs` orchestrates the `new` flow; `removal.rs` orchestrates `remove`. These are the only modules that compose the others, apart from `config.rs` calling `git.rs` for its tracked-file check.
 - `git.rs` wraps the `git` CLI (each call takes a `cwd` so tests can drive it without a process-wide chdir).
-- `config.rs` loads `.work-shmirk/settings.json` + `settings.local.json` and deep-merges them with `jq *` semantics. Also home to path-containment validation.
+- `config.rs` loads `.work-shmirk/settings.json`, refusing it when git tracks it (see the contract). Also home to path-containment validation.
 - `tmux.rs`, `copyfiles.rs`, `symlinks.rs`, `personal_issues.rs` are the side-effect modules invoked from `worktree.rs` / `removal.rs`.
 - `issue.rs` is pure: branch-name → issue ref → formatted tracker id.
 - `cli.rs::parse_worktree_name` rejects names containing characters hostile on filesystems, in branch-name tool integrations, and in shells; it is defense-in-depth rather than a load-bearing control. Downstream code also POSIX-single-quote-escapes everything it interpolates.

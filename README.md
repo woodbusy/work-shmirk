@@ -39,14 +39,18 @@ CLI rejects invalid names up front, before any subprocess runs.
 
 ## Configuration
 
-Config lives in `<repo>/.work-shmirk/`:
+Config lives in `<repo>/.work-shmirk/settings.json`. It is personal
+configuration and must not be tracked by git: work-shmirk refuses to run when
+the file (or the file a symlink points to inside the repo) is tracked, so a
+repository cannot configure work-shmirk on your machine. Add `.work-shmirk/`
+to your global gitignore.
 
-- `settings.json` — committed defaults
-- `settings.local.json` — gitignored per-user overrides
+The file may be a symlink to a file outside the repository, such as one in a
+dotfiles repo.
 
-The two files are deep-merged: nested objects merge key-by-key, while scalars
-and arrays from the local file replace those in the base. This matches `jq`'s
-`*` operator.
+Earlier versions also read `settings.local.json`. That file is no longer
+supported, and work-shmirk errors when it finds one; move its contents into
+`settings.json`.
 
 ### Schema
 
@@ -102,7 +106,7 @@ and arrays from the local file replace those in the base. This matches `jq`'s
   // setting.)
   "personal_issues": false,
 
-  // Claude launch settings. Prefer putting this in settings.local.json.
+  // Claude launch settings.
   "claude": {
     // 1Password secret reference (must start with `op://`) holding a
     // service account token. When set, the bottom-left pane runs
@@ -117,6 +121,10 @@ and arrays from the local file replace those in the base. This matches `jq`'s
 
 ## Security notes
 
+work-shmirk only loads an untracked `settings.json`, so a repository cannot
+ship settings that drive it. This does not cover a file you create yourself
+from untrusted content.
+
 On `work-shmirk remove`, config is read from the target worktree first, so a
 hostile worktree could supply `symlink_dir` and `symlink_links` values. The
 binary validates containment before deleting, but you should still only
@@ -129,9 +137,7 @@ load-bearing behaviors maintainers should preserve.
 With `claude.op_token_ref` set, anything claude runs (including Bash tool
 calls) inherits `OP_SERVICE_ACCOUNT_TOKEN`, so scope the service account to
 only the vault Claude needs. The variable is unset again when claude exits, so
-the shell you land in afterwards does not keep it. Keep the setting in
-`settings.local.json`: a reference supplied by a committed `settings.json`
-could point at any item you can read.
+the shell you land in afterwards does not keep it.
 
 ## Binary override env vars
 
