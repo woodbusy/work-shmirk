@@ -53,6 +53,10 @@ fn new_with_config_copies_files_and_creates_symlinks() {
 
     let wt = env.worktrees_root().join("ENG-42-foo");
     assert!(
+        !wt.join(".worktree-local").exists(),
+        "new must not create .worktree-local"
+    );
+    assert!(
         wt.join("config.json").is_file(),
         "bare-filename copy missing"
     );

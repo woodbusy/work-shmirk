@@ -19,11 +19,11 @@ work-shmirk remove [<worktree-name>]
 ```
 
 - `work-shmirk new feature-x` creates a new branch `feature-x`, adds a worktree
-  for it alongside the main checkout, sets up `.worktree-local/`, optionally
-  runs `copy_files` / creates symlinks, copies `.claude/dev-workflow.local.yaml`
-  from the current worktree if present, optionally sets up `personal-issues`, launches a
-  tmux 3-pane layout (with `claude` in the bottom-left pane) when `$TMUX` is
-  set, and prints the new worktree path to stdout before exiting.
+  for it alongside the main checkout, optionally runs `copy_files` / creates
+  symlinks, copies `.claude/dev-workflow.local.yaml` from the current worktree
+  if present, optionally sets up `personal-issues`, launches a tmux 3-pane
+  layout (with `claude` in the bottom-left pane) when `$TMUX` is set, and
+  prints the new worktree path to stdout before exiting.
 - `work-shmirk new -e existing-branch` checks out an existing branch instead
   of creating one.
 - `work-shmirk remove feature-x` removes the symlinks, the worktree, and the
@@ -88,7 +88,7 @@ supported, and work-shmirk errors when it finds one; move its contents into
   // <symlink_dir>/<worktree-name>/. All leading dots are stripped from the
   // link name: ".env" → "env", "..env" → "env". Entries that are empty or
   // that strip to empty ("..", "...", etc.) are rejected with an error.
-  "symlink_links": [".worktree-local", ".claude/skills"],
+  "symlink_links": [".claude/skills"],
 
   // Tmux integration.
   "tmux": {
