@@ -16,6 +16,7 @@ This installs a `work-shmirk` binary on your `$PATH`.
 ```sh
 work-shmirk new [--existing|-e] <worktree-name>
 work-shmirk remove [<worktree-name>]
+work-shmirk relink
 ```
 
 - `work-shmirk new feature-x` creates a new branch `feature-x`, adds a worktree
@@ -29,6 +30,19 @@ work-shmirk remove [<worktree-name>]
 - `work-shmirk remove feature-x` removes the symlinks, the worktree, and the
   local branch. Run with no argument from inside a worktree to remove that
   worktree. Refuses to default-target the main worktree.
+- `work-shmirk relink`, run from inside a worktree, re-creates that worktree's
+  symlinks under `<symlink_dir>/<worktree-name>/` from the current
+  `symlink_dir` and `symlink_links`. Use it after changing the symlink config,
+  when links were deleted or went stale, or for a worktree that predates the
+  config. It takes no worktree-name argument and refuses to run in the main
+  worktree. A symlink already at a destination is replaced, so running it
+  again is safe; anything at a destination that is not a symlink is left
+  alone, and that entry is skipped with a message. The remaining entries are
+  still linked, and the command then exits non-zero naming the skipped
+  entries. It creates the per-worktree link directory if it is missing, but
+  never `symlink_dir` itself or directories beneath the link directory:
+  create `symlink_dir` first if you add it after the worktree exists. With
+  `symlink_dir` unset it changes nothing.
 
 ### Worktree-name validation
 
@@ -84,8 +98,9 @@ supported, and work-shmirk errors when it finds one; move its contents into
   // Empty string or omitted = feature disabled.
   "symlink_dir": "~/worktree-links",
 
-  // Files inside the new worktree to expose as symlinks under
-  // <symlink_dir>/<worktree-name>/. All leading dots are stripped from the
+  // Files inside the worktree to expose as symlinks under
+  // <symlink_dir>/<worktree-name>/, created by `new` and re-created by
+  // `relink`. All leading dots are stripped from the
   // link name: ".env" → "env", "..env" → "env". Entries that are empty or
   // that strip to empty ("..", "...", etc.) are rejected with an error.
   "symlink_links": [".worktree-local", ".claude/skills"],
@@ -128,7 +143,10 @@ from untrusted content.
 On `work-shmirk remove`, config is read from the target worktree first, so a
 hostile worktree could supply `symlink_dir` and `symlink_links` values. The
 binary validates containment before deleting, but you should still only
-`remove` worktrees whose contents you trust. See
+`remove` worktrees whose contents you trust. `work-shmirk relink` reads config
+the same way, from the current worktree first; it writes only inside the
+per-worktree link directory and never deletes anything that is not a symlink,
+but the same advice applies. See
 [docs/contract.md](docs/contract.md) for the full trust model and the
 load-bearing behaviors maintainers should preserve.
 

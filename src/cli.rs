@@ -31,6 +31,8 @@ pub enum Command {
         #[arg(value_parser = parse_worktree_name)]
         name: Option<String>,
     },
+    /// Re-create the current worktree's symlinks from `symlink_dir` and `symlink_links`.
+    Relink,
 }
 
 /// Validate a worktree name. Rejects:

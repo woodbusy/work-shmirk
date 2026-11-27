@@ -9,6 +9,7 @@ pub mod copyfiles;
 pub mod git;
 pub mod issue;
 pub mod personal_issues;
+pub mod relink;
 pub mod removal;
 pub mod symlinks;
 pub mod tmux;
@@ -24,5 +25,6 @@ pub fn run() -> Result<()> {
     match cli.command {
         cli::Command::New { existing, name } => worktree::run_new(&name, existing),
         cli::Command::Remove { name } => removal::run_remove(name.as_deref()),
+        cli::Command::Relink => relink::run_relink(),
     }
 }

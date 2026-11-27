@@ -104,3 +104,65 @@ fn remove_rejects_tracked_per_worktree_settings_before_removing() {
 
     assert!(wt.is_dir(), "worktree must survive a rejected remove");
 }
+
+/// Create `feature-x` with a main-repo config that links `.env`, then point
+/// its link at a stale target. Returns (worktree, link path, stale target).
+fn worktree_with_stale_link(
+    env: &TestEnv,
+) -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
+    let base = env.repo_dir.parent().unwrap().join("links");
+    fs::create_dir_all(&base).unwrap();
+    let settings = serde_json::json!({
+        "symlink_dir": base.to_string_lossy(),
+        "symlink_links": [".env"]
+    });
+    let cfg_dir = env.repo_dir.join(".work-shmirk");
+    fs::create_dir_all(&cfg_dir).unwrap();
+    fs::write(cfg_dir.join("settings.json"), settings.to_string()).unwrap();
+    env.bin().args(["new", "feature-x"]).assert().success();
+
+    let link = base.join("feature-x").join("env");
+    let stale_target = env.repo_dir.parent().unwrap().join("stale");
+    fs::remove_file(&link).unwrap();
+    std::os::unix::fs::symlink(&stale_target, &link).unwrap();
+    (env.worktrees_root().join("feature-x"), link, stale_target)
+}
+
+#[test]
+fn relink_rejects_tracked_per_worktree_settings_before_relinking() {
+    let env = TestEnv::new();
+    let (wt, link, stale_target) = worktree_with_stale_link(&env);
+    let wt_cfg_dir = wt.join(".work-shmirk");
+    fs::create_dir_all(&wt_cfg_dir).unwrap();
+    fs::copy(
+        env.repo_dir.join(".work-shmirk/settings.json"),
+        wt_cfg_dir.join("settings.json"),
+    )
+    .unwrap();
+    git(&wt, &["add", "-f", ".work-shmirk/settings.json"]);
+
+    env.bin()
+        .current_dir(&wt)
+        .arg("relink")
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("tracked by git"));
+
+    assert_eq!(fs::read_link(&link).unwrap(), stale_target);
+}
+
+#[test]
+fn relink_rejects_tracked_main_repo_settings_before_relinking() {
+    let env = TestEnv::new();
+    let (wt, link, stale_target) = worktree_with_stale_link(&env);
+    git(&env.repo_dir, &["add", "-f", ".work-shmirk/settings.json"]);
+
+    env.bin()
+        .current_dir(&wt)
+        .arg("relink")
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("tracked by git"));
+
+    assert_eq!(fs::read_link(&link).unwrap(), stale_target);
+}
