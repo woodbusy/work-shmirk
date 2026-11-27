@@ -277,10 +277,11 @@ fn relink_one(link_dir: &Path, link: &PlannedLink) -> Result<()> {
                 "{} is a symlink or not a directory; relink creates no intermediate directories",
                 dest.display()
             ),
-            Err(_) => anyhow::bail!(
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => anyhow::bail!(
                 "{} does not exist; relink creates no intermediate directories",
                 dest.display()
             ),
+            Err(e) => return Err(e).with_context(|| format!("probing {}", dest.display())),
         }
     }
 
@@ -525,6 +526,32 @@ mod tests {
             "unexpected error: {err}"
         );
         assert!(!fx.link_dir().join("sub").exists());
+    }
+
+    #[test]
+    fn relink_one_reports_unreadable_intermediate_component_as_probe_error() {
+        use std::os::unix::fs::PermissionsExt;
+        let fx = RelinkFixture::new();
+        let locked = fx.link_dir().join("locked");
+        std::fs::create_dir_all(locked.join("inner")).unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let probe_is_denied = std::fs::symlink_metadata(locked.join("inner")).is_err();
+        let planned = PlannedLink {
+            entry: "locked/inner/file",
+            relative_dest: PathBuf::from("locked/inner/file"),
+            source: fx.worktree.join("locked/inner/file"),
+        };
+        let result = relink_one(&fx.link_dir(), &planned);
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        if !probe_is_denied {
+            eprintln!("skipping: permission bits not enforced (running as root?)");
+            return;
+        }
+        let message = format!("{:#}", result.unwrap_err());
+        assert!(
+            message.contains("probing") && !message.contains("does not exist"),
+            "unexpected error: {message}"
+        );
     }
 
     #[test]
