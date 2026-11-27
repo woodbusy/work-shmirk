@@ -41,8 +41,9 @@ work-shmirk relink
   still linked, and the command then exits non-zero naming the skipped
   entries. It creates the per-worktree link directory if it is missing, but
   never `symlink_dir` itself or directories beneath the link directory:
-  create `symlink_dir` first if you add it after the worktree exists. With
-  `symlink_dir` unset it changes nothing.
+  create `symlink_dir` first if you add it after the worktree exists. Unlike
+  `new`, it rejects an entry containing a `..` component, before writing
+  anything. With `symlink_dir` unset it changes nothing.
 
 ### Worktree-name validation
 

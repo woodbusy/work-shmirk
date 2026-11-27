@@ -6,7 +6,7 @@
 //! than silently skipped.
 
 use anyhow::{Context, Result};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use crate::config::ensure_inside;
 
@@ -140,8 +140,9 @@ struct PlannedLink<'a> {
 ///
 /// 1. Validate everything before writing anything: entry names, lexical
 ///    containment of each dest in `<symlink_dir_base>/<name>` and each source
-///    in `worktree`, that `symlink_dir_base` already exists as a directory
-///    (it is never created), and that the per-worktree link dir and the
+///    in `worktree`, no `..` component in the stripped name (so the dest is
+///    the same path `remove_symlinks` deletes), that `symlink_dir_base`
+///    already exists as a directory (it is never created), and that the per-worktree link dir and the
 ///    worktree do not overlap in either direction once symlinks are resolved.
 /// 2. Apply. The link dir must be absent (created, one level only) or a real
 ///    directory; a symlink or non-directory there aborts the run. Every
@@ -174,19 +175,21 @@ pub fn relink_symlinks(
                     lexical_link_dir.display()
                 )
             })?;
+        ensure_inside(worktree, Path::new(link_source)).with_context(|| {
+            format!("validating symlink source '{link_source}' inside worktree")
+        })?;
+        if Path::new(stripped)
+            .components()
+            .any(|component| component == Component::ParentDir)
+        {
+            anyhow::bail!(
+                "symlink_links entry '{link_source}' contains a '..' component; relink rejects it so the link it makes is the one `remove` tears down"
+            );
+        }
         let relative_dest = normalized_dest
             .strip_prefix(&normalized_link_dir)
             .map(Path::to_path_buf)
             .unwrap_or_default();
-        if relative_dest.as_os_str().is_empty() {
-            anyhow::bail!(
-                "symlink_links entry '{link_source}' resolves to the link dir {} itself",
-                lexical_link_dir.display()
-            );
-        }
-        ensure_inside(worktree, Path::new(link_source)).with_context(|| {
-            format!("validating symlink source '{link_source}' inside worktree")
-        })?;
         planned.push(PlannedLink {
             entry: link_source,
             relative_dest,
@@ -536,13 +539,16 @@ mod tests {
     }
 
     #[test]
-    fn relink_rejects_entry_resolving_to_link_dir() {
+    fn relink_rejects_parent_dir_component_before_writing() {
         let fx = RelinkFixture::new();
-        let err = fx.relink(&[".a/.."]).unwrap_err();
-        assert!(
-            err.to_string().contains("resolves to the link dir"),
-            "unexpected error: {err}"
-        );
+        for entry in [".a/..", "x/../env"] {
+            let err = fx.relink(&[".env", entry]).unwrap_err();
+            assert!(
+                err.to_string().contains("contains a '..' component"),
+                "unexpected error for {entry}: {err}"
+            );
+            assert!(std::fs::symlink_metadata(fx.link_dir()).is_err());
+        }
     }
 
     #[test]
