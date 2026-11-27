@@ -43,7 +43,10 @@ work-shmirk relink
   never `symlink_dir` itself or directories beneath the link directory:
   create `symlink_dir` first if you add it after the worktree exists. Unlike
   `new`, it rejects an entry containing a `..` component, before writing
-  anything. With `symlink_dir` unset it changes nothing.
+  anything. It aborts if `symlink_dir` does not exist, or if the link
+  directory is a symlink or overlaps the worktree. A missing source is
+  linked anyway, dangling, with a warning. With `symlink_dir` unset it
+  changes nothing.
 
 ### Worktree-name validation
 

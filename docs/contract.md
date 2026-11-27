@@ -42,6 +42,8 @@ On `work-shmirk relink`, config is selected exactly as `remove` selects it (`con
 
 A missing source is still linked, dangling, as `new` does, with a warning on stderr. With `symlink_dir` unset or empty, `relink` changes nothing and exits 0.
 
+**Residual exposure.** These guards bound writes to `<symlink_dir>/<name>`, but `symlink_dir` itself comes from the loaded config, and nothing ties a per-worktree `symlink_dir` to the main repo's. A per-worktree config can name any existing directory (for example `~`); `relink` then creates `<that dir>/<name>` when absent, or, when a real directory of that name exists, replaces the symlinks in it whose names match an entry with links into the worktree. It still never deletes a non-symlink. Because settings must be untracked, such a config cannot arrive by checking out a branch; something must write it into the worktree locally. As with `remove`, only `relink` worktrees whose untracked contents you trust.
+
 ## Binary override env vars
 
 For testability the binary honors these env vars in all builds, including release:
