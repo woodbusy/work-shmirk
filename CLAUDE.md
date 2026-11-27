@@ -9,7 +9,7 @@ Map for agents: start here, follow pointers. Each doc owns one thing.
 | Doc | Owns |
 |-----|------|
 | [README.md](README.md) | User-facing: install, usage, config schema, env vars, dev commands |
-| [docs/contract.md](docs/contract.md) | Internal contract: load-bearing behaviors, security design, trust boundary on `remove`, env-var trust model |
+| [docs/contract.md](docs/contract.md) | Internal contract: load-bearing behaviors, security design, trust boundary on `remove` and `relink`, env-var trust model |
 
 ## Quick reference
 
@@ -27,10 +27,10 @@ cargo install --path .                       # install the work-shmirk binary
 
 The crate splits a thin CLI dispatcher (`lib.rs::run` → `cli.rs`) from per-concern modules so each can be unit-tested in isolation:
 
-- `worktree.rs` orchestrates the `new` flow; `removal.rs` orchestrates `remove`. These are the only modules that compose the others, apart from `config.rs` calling `git.rs` for its tracked-file check.
+- `worktree.rs` orchestrates the `new` flow; `removal.rs` orchestrates `remove`; `relink.rs` orchestrates `relink`. These are the only modules that compose the others, apart from `config.rs` calling `git.rs` for its tracked-file check.
 - `git.rs` wraps the `git` CLI (each call takes a `cwd` so tests can drive it without a process-wide chdir).
-- `config.rs` loads `.work-shmirk/settings.json`, refusing it when git tracks it (see the contract). Also home to path-containment validation.
-- `tmux.rs`, `copyfiles.rs`, `symlinks.rs`, `personal_issues.rs` are the side-effect modules invoked from `worktree.rs` / `removal.rs`.
+- `config.rs` loads `.work-shmirk/settings.json`, refusing it when git tracks it (see the contract). Also home to path-containment validation and `select_config_dir`, the per-worktree-first config-dir selection shared by `remove` and `relink`.
+- `tmux.rs`, `copyfiles.rs`, `symlinks.rs`, `personal_issues.rs` are the side-effect modules invoked from `worktree.rs` / `removal.rs` / `relink.rs`.
 - `issue.rs` is pure: branch-name → issue ref → formatted tracker id.
 - `cli.rs::parse_worktree_name` rejects names containing characters hostile on filesystems, in branch-name tool integrations, and in shells; it is defense-in-depth rather than a load-bearing control. Downstream code also POSIX-single-quote-escapes everything it interpolates.
 

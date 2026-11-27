@@ -4,7 +4,7 @@ use anyhow::{anyhow, Context, Result};
 use std::path::Path;
 
 use crate::cli::parse_worktree_name;
-use crate::config::{expand_symlink_dir, load};
+use crate::config::{expand_symlink_dir, load, select_config_dir};
 use crate::git;
 use crate::symlinks::remove_symlinks;
 
@@ -44,42 +44,7 @@ pub fn run_remove(arg: Option<&str>) -> Result<()> {
 
     let target_path = worktrees_root.join(&name);
 
-    // Pick config dir: three-way check.
-    //
-    // 1. `target_cfg.is_dir()` — follows symlinks, so symlinks-to-dirs work.
-    //    Use the per-worktree config.
-    // 2. `symlink_metadata` fails (no directory entry at all, not even a broken
-    //    symlink) — silently fall back to the main repo's config. This is the
-    //    normal case for worktrees that have no per-worktree override.
-    // 3. Everything else (regular file, broken symlink, socket, fifo, …) — the
-    //    entry exists but cannot be used as a config directory. This is almost
-    //    certainly a user mistake; fail loudly rather than silently loading a
-    //    different config that may remove the wrong symlinks.
-    let target_cfg = target_path.join(".work-shmirk");
-    let main_cfg = worktrees_root.join(".work-shmirk");
-    // Three-way check using a single metadata probe to avoid TOCTOU and double
-    // syscalls. `is_dir()` follows symlinks; we use `symlink_metadata()` to
-    // distinguish "absent" from "present but wrong type".
-    let config_dir = if target_cfg.is_dir() {
-        target_cfg
-    } else {
-        match target_cfg.symlink_metadata() {
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => main_cfg,
-            Err(e) => {
-                return Err(anyhow!(
-                    "{} could not be probed: {}",
-                    target_cfg.display(),
-                    e
-                ))
-            }
-            Ok(_) => {
-                return Err(anyhow!(
-                    "{} exists but is not a directory; it must be a directory (or absent) for work-shmirk to load config",
-                    target_cfg.display()
-                ))
-            }
-        }
-    };
+    let config_dir = select_config_dir(&target_path, &worktrees_root)?;
 
     let settings = load(&config_dir)?;
 

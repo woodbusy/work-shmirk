@@ -206,6 +206,46 @@ pub fn expand_symlink_dir_with_home(raw: &str, home: &str) -> Result<Option<Path
     Ok(Some(normalized))
 }
 
+/// Pick the config directory for a command acting on `worktree`: the
+/// worktree's own `.work-shmirk/` when it is a directory, otherwise the main
+/// repo's at `main_repo_root`.
+///
+/// Three-way check:
+///
+/// 1. `.work-shmirk` is a directory (`is_dir()` follows symlinks, so
+///    symlinks-to-dirs work) — use the per-worktree config.
+/// 2. `symlink_metadata` fails with `NotFound` (no directory entry at all, not
+///    even a broken symlink) — silently fall back to the main repo's config.
+///    This is the normal case for worktrees that have no per-worktree
+///    override.
+/// 3. Everything else (regular file, broken symlink, socket, fifo, …) — the
+///    entry exists but cannot be used as a config directory. This is almost
+///    certainly a user mistake; fail loudly rather than silently loading a
+///    different config that may act on the wrong symlinks.
+///
+/// `symlink_metadata()` distinguishes "absent" from "present but wrong type"
+/// without a second probe of the same kind.
+pub fn select_config_dir(worktree: &Path, main_repo_root: &Path) -> Result<PathBuf> {
+    let worktree_cfg = worktree.join(".work-shmirk");
+    if worktree_cfg.is_dir() {
+        return Ok(worktree_cfg);
+    }
+    match worktree_cfg.symlink_metadata() {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Ok(main_repo_root.join(".work-shmirk"))
+        }
+        Err(e) => Err(anyhow!(
+            "{} could not be probed: {}",
+            worktree_cfg.display(),
+            e
+        )),
+        Ok(_) => Err(anyhow!(
+            "{} exists but is not a directory; it must be a directory (or absent) for work-shmirk to load config",
+            worktree_cfg.display()
+        )),
+    }
+}
+
 /// Validate that `candidate` resolves to a path inside `base` (lexically;
 /// the path need not exist yet). Returns the normalized absolute-ish path on
 /// success; errors with a clear message on escape.
@@ -478,6 +518,69 @@ mod tests {
                 .unwrap()
                 .unwrap(),
             PathBuf::from("/x/${HOME}/y")
+        );
+    }
+
+    fn select_config_dir_fixture() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let tmp = tempfile::tempdir().unwrap();
+        let worktree = tmp.path().join("wt");
+        let main_repo_root = tmp.path().join("main");
+        std::fs::create_dir_all(&worktree).unwrap();
+        std::fs::create_dir_all(main_repo_root.join(".work-shmirk")).unwrap();
+        (tmp, worktree, main_repo_root)
+    }
+
+    #[test]
+    fn select_config_dir_prefers_worktree_directory() {
+        let (_tmp, worktree, main_repo_root) = select_config_dir_fixture();
+        std::fs::create_dir(worktree.join(".work-shmirk")).unwrap();
+        assert_eq!(
+            select_config_dir(&worktree, &main_repo_root).unwrap(),
+            worktree.join(".work-shmirk")
+        );
+    }
+
+    #[test]
+    fn select_config_dir_accepts_symlink_to_directory() {
+        let (tmp, worktree, main_repo_root) = select_config_dir_fixture();
+        let real_cfg = tmp.path().join("real-cfg");
+        std::fs::create_dir(&real_cfg).unwrap();
+        std::os::unix::fs::symlink(&real_cfg, worktree.join(".work-shmirk")).unwrap();
+        assert_eq!(
+            select_config_dir(&worktree, &main_repo_root).unwrap(),
+            worktree.join(".work-shmirk")
+        );
+    }
+
+    #[test]
+    fn select_config_dir_falls_back_to_main_when_absent() {
+        let (_tmp, worktree, main_repo_root) = select_config_dir_fixture();
+        assert_eq!(
+            select_config_dir(&worktree, &main_repo_root).unwrap(),
+            main_repo_root.join(".work-shmirk")
+        );
+    }
+
+    #[test]
+    fn select_config_dir_rejects_regular_file() {
+        let (_tmp, worktree, main_repo_root) = select_config_dir_fixture();
+        std::fs::write(worktree.join(".work-shmirk"), "not a dir").unwrap();
+        let err = select_config_dir(&worktree, &main_repo_root).unwrap_err();
+        assert!(
+            err.to_string().contains("exists but is not a directory"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn select_config_dir_rejects_broken_symlink() {
+        let (tmp, worktree, main_repo_root) = select_config_dir_fixture();
+        std::os::unix::fs::symlink(tmp.path().join("missing"), worktree.join(".work-shmirk"))
+            .unwrap();
+        let err = select_config_dir(&worktree, &main_repo_root).unwrap_err();
+        assert!(
+            err.to_string().contains("exists but is not a directory"),
+            "unexpected error: {err}"
         );
     }
 
