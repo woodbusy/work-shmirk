@@ -36,17 +36,18 @@ work-shmirk relink
   when links were deleted or went stale, or for a worktree that predates the
   config. It takes no worktree-name argument and refuses to run in the main
   worktree. A symlink already at a destination is replaced, so running it
-  again is safe; anything at a destination that is not a symlink is left
-  alone, and that entry is skipped with a message. The remaining entries are
-  still linked, and the command then exits non-zero naming the skipped
-  entries. It creates the per-worktree link directory if it is missing, but
-  never `symlink_dir` itself or directories beneath the link directory:
-  create `symlink_dir` first if you add it after the worktree exists. Unlike
-  `new`, it rejects an entry containing a `..` component, before writing
-  anything. It aborts if `symlink_dir` does not exist, or if the link
-  directory is a symlink or overlaps the worktree. A missing source is
-  linked anyway, dangling, with a warning. With `symlink_dir` unset it
-  changes nothing.
+  again is safe. With `symlink_dir` unset it changes nothing.
+  - It aborts before writing anything if an entry contains a `..` component
+    (unlike `new`), if `symlink_dir` does not exist, or if the link directory
+    is a symlink or overlaps the worktree.
+  - It skips an entry, with a message, whose destination exists and is not a
+    symlink, or whose parent directory under the link directory is missing or
+    not a real directory. The remaining entries are still linked, then it
+    exits non-zero naming the skipped entries.
+  - It creates the per-worktree link directory if missing, but never
+    `symlink_dir` itself or directories beneath the link directory: create
+    `symlink_dir` first if you add it after the worktree exists.
+  - A missing source is linked anyway, dangling, with a warning.
 
 ### Worktree-name validation
 
