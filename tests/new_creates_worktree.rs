@@ -11,8 +11,10 @@ fn new_creates_worktree_dir_and_branch_and_prints_path() {
 
     let wt = env.worktrees_root().join("feature-x");
     assert!(wt.is_dir(), "worktree dir should exist");
-    assert!(wt.join(".worktree-local").is_dir());
-    assert!(wt.join(".worktree-local/tmp").is_dir());
+    assert!(
+        !wt.join(".worktree-local").exists(),
+        "new must not create .worktree-local"
+    );
 
     // Branch should exist.
     let branches = std::process::Command::new("git")
