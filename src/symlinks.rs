@@ -264,26 +264,13 @@ pub fn relink_symlinks(
 /// skipped with nothing written; I/O errors from the write itself are
 /// reported the same way.
 fn relink_one(link_dir: &Path, link: &PlannedLink) -> Result<()> {
-    let mut dest = link_dir.to_path_buf();
-    let mut components = link.relative_dest.components().peekable();
-    while let Some(component) = components.next() {
-        dest.push(component);
-        if components.peek().is_none() {
-            break;
+    let dest = match walk_intermediates(link_dir, &link.relative_dest) {
+        Ok(dest) => dest,
+        Err(IntermediateWalkError::Probe(probe_error)) => return Err(probe_error),
+        Err(stop) => {
+            anyhow::bail!("{stop}; relink creates no intermediate directories")
         }
-        match std::fs::symlink_metadata(&dest) {
-            Ok(meta) if meta.file_type().is_dir() => {}
-            Ok(_) => anyhow::bail!(
-                "{} is a symlink or not a directory; relink creates no intermediate directories",
-                dest.display()
-            ),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => anyhow::bail!(
-                "{} does not exist; relink creates no intermediate directories",
-                dest.display()
-            ),
-            Err(e) => return Err(e).with_context(|| format!("probing {}", dest.display())),
-        }
-    }
+    };
 
     match std::fs::symlink_metadata(&dest) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -312,6 +299,67 @@ fn relink_one(link_dir: &Path, link: &PlannedLink) -> Result<()> {
     })?;
     println!("Linked {} -> {}", dest.display(), link.source.display());
     Ok(())
+}
+
+/// Why [`walk_intermediates`] stopped before reaching the dest. The `Display`
+/// form is the short, command-neutral message; callers add their own context.
+#[derive(Debug)]
+enum IntermediateWalkError {
+    /// An intermediate is a symlink or some other non-directory.
+    NotARealDirectory(PathBuf),
+    /// An intermediate does not exist.
+    Absent(PathBuf),
+    /// Probing an intermediate failed for a reason other than its absence.
+    Probe(anyhow::Error),
+}
+
+impl std::fmt::Display for IntermediateWalkError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotARealDirectory(path) => {
+                write!(
+                    formatter,
+                    "{} is a symlink or not a directory",
+                    path.display()
+                )
+            }
+            Self::Absent(path) => write!(formatter, "{} does not exist", path.display()),
+            Self::Probe(probe_error) => write!(formatter, "{probe_error:#}"),
+        }
+    }
+}
+
+/// Walk every component of `relative_dest` except the last, starting at
+/// `link_dir`, and return the full dest path once each of them has been
+/// verified as a real directory. Uses `symlink_metadata` only, so no symlink
+/// is ever followed; the walk stops at the first intermediate that is a
+/// symlink, a non-directory, or absent.
+fn walk_intermediates(
+    link_dir: &Path,
+    relative_dest: &Path,
+) -> std::result::Result<PathBuf, IntermediateWalkError> {
+    let mut dest = link_dir.to_path_buf();
+    let mut components = relative_dest.components().peekable();
+    while let Some(component) = components.next() {
+        dest.push(component);
+        if components.peek().is_none() {
+            break;
+        }
+        match std::fs::symlink_metadata(&dest) {
+            Ok(meta) if meta.file_type().is_dir() => {}
+            Ok(_) => return Err(IntermediateWalkError::NotARealDirectory(dest)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Err(IntermediateWalkError::Absent(dest))
+            }
+            Err(e) => {
+                let context = format!("probing {}", dest.display());
+                return Err(IntermediateWalkError::Probe(
+                    anyhow::Error::new(e).context(context),
+                ));
+            }
+        }
+    }
+    Ok(dest)
 }
 
 fn is_symlink(p: &Path) -> bool {
