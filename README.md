@@ -41,12 +41,13 @@ work-shmirk relink
     (unlike `new`), if `symlink_dir` does not exist, or if the link directory
     is a symlink or overlaps the worktree.
   - It skips an entry, with a message, whose destination exists and is not a
-    symlink, or whose parent directory under the link directory is missing or
-    not a real directory. The remaining entries are still linked, then it
-    exits non-zero naming the skipped entries.
-  - It creates the per-worktree link directory if missing, but never
-    `symlink_dir` itself or directories beneath the link directory: create
-    `symlink_dir` first if you add it after the worktree exists.
+    symlink, or whose parent directory under the link directory is not a real
+    directory (for example, a symlink). The remaining entries are still
+    linked, then it exits non-zero naming the skipped entries.
+  - It creates the per-worktree link directory if missing, and any missing
+    directories beneath it as real directories, but never `symlink_dir`
+    itself: create `symlink_dir` first if you add it after the worktree
+    exists.
   - A missing source is linked anyway, dangling, with a warning.
 
 ### Worktree-name validation
@@ -108,6 +109,9 @@ supported, and work-shmirk errors when it finds one; move its contents into
   // `relink`. All leading dots are stripped from the
   // link name: ".env" → "env", "..env" → "env". Entries that are empty or
   // that strip to empty ("..", "...", etc.) are rejected with an error.
+  // A nested entry keeps its path below the link directory: ".claude/skills"
+  // → <symlink_dir>/<worktree-name>/claude/skills. `new` and `relink` create
+  // the missing directories, and `remove` removes them once they are empty.
   "symlink_links": [".claude/skills"],
 
   // Tmux integration.

@@ -64,7 +64,7 @@ fn relink_recreates_deleted_link_dir() {
 }
 
 #[test]
-fn relink_links_nested_entry_only_when_intermediate_exists() {
+fn relink_creates_absent_intermediates_for_nested_entry() {
     let env = TestEnv::new();
     let (wt, base) = setup(&env, &["a/x", "b/y", ".env"]);
     for dir in ["a", "b"] {
@@ -76,20 +76,47 @@ fn relink_links_nested_entry_only_when_intermediate_exists() {
     let link_dir = base.join(WORKTREE);
     fs::create_dir(link_dir.join("a")).unwrap();
 
-    relink(&env, &wt)
-        .failure()
-        .stderr(contains("skipping 'b/y'"))
-        .stderr(contains("skipped 1 symlink_links entry: b/y"));
+    relink(&env, &wt).success();
 
-    assert_eq!(
-        fs::read_link(link_dir.join("a/x")).unwrap(),
-        expected_target(&wt, "a/x")
-    );
+    assert!(fs::symlink_metadata(link_dir.join("b"))
+        .unwrap()
+        .file_type()
+        .is_dir());
+    for entry in ["a/x", "b/y"] {
+        assert_eq!(
+            fs::read_link(link_dir.join(entry)).unwrap(),
+            expected_target(&wt, entry)
+        );
+    }
     assert_eq!(
         fs::read_link(link_dir.join("env")).unwrap(),
         expected_target(&wt, ".env")
     );
-    assert!(fs::symlink_metadata(link_dir.join("b")).is_err());
+}
+
+#[test]
+fn relink_then_remove_tears_down_created_intermediates() {
+    let env = TestEnv::new();
+    let (wt, base) = setup(&env, &[".claude/skills", ".claude/commands", "a/b/c"]);
+    let link_dir = base.join(WORKTREE);
+
+    relink(&env, &wt).success();
+    assert!(fs::symlink_metadata(link_dir.join("claude/skills"))
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert!(fs::symlink_metadata(link_dir.join("a/b/c"))
+        .unwrap()
+        .file_type()
+        .is_symlink());
+
+    env.bin().args(["remove", WORKTREE]).assert().success();
+
+    assert!(
+        fs::symlink_metadata(&link_dir).is_err(),
+        "link dir should be gone"
+    );
+    assert!(!wt.exists(), "worktree dir should be gone");
 }
 
 #[test]

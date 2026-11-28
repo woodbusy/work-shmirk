@@ -147,6 +147,27 @@ fn relink_skips_symlinked_intermediate_component() {
 }
 
 #[test]
+fn relink_skips_non_directory_intermediate() {
+    let env = TestEnv::new();
+    let base = scratch_root(&env).join("links");
+    let wt = setup(&env, &base.to_string_lossy(), &[".claude/skills"]);
+    fs::create_dir_all(wt.join(".claude/skills")).unwrap();
+    let blocking_file = base.join(WORKTREE).join("claude");
+    fs::write(&blocking_file, "mine").unwrap();
+
+    relink(&env, &wt)
+        .failure()
+        .stderr(contains("skipping '.claude/skills'"))
+        .stderr(contains("is a symlink or not a directory"));
+
+    assert!(fs::symlink_metadata(&blocking_file)
+        .unwrap()
+        .file_type()
+        .is_file());
+    assert_eq!(fs::read_to_string(&blocking_file).unwrap(), "mine");
+}
+
+#[test]
 fn relink_refuses_link_dir_equal_to_worktree() {
     let env = TestEnv::new();
     let wt = setup(&env, &env.repo_dir.to_string_lossy(), &[".env"]);
