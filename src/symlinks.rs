@@ -16,19 +16,48 @@ pub(crate) fn strip_leading_dots(name: &str) -> &str {
     name.trim_start_matches('.')
 }
 
+/// Where `stripped` (a dot-stripped entry name) puts its link, relative to
+/// `lexical_link_dir`, once `.` and `..` are resolved lexically. `new`,
+/// `remove` and `relink` all act on this path, so none of them hands the
+/// kernel a `..` to resolve through a symlinked component. Errors when the
+/// entry escapes the link dir.
+fn normalized_relative_dest(
+    lexical_link_dir: &Path,
+    entry: &str,
+    stripped: &str,
+) -> Result<PathBuf> {
+    let normalized_link_dir = ensure_inside(lexical_link_dir, lexical_link_dir)?;
+    let normalized_dest = ensure_inside(lexical_link_dir, &lexical_link_dir.join(stripped))
+        .with_context(|| {
+            format!(
+                "validating symlink dest for '{entry}' under {}",
+                lexical_link_dir.display()
+            )
+        })?;
+    Ok(normalized_dest
+        .strip_prefix(&normalized_link_dir)
+        .map(Path::to_path_buf)
+        .unwrap_or_default())
+}
+
 /// Create symlinks for each `link_source` in `links` under `<symlink_dir>/<name>`.
 /// `link_source` is interpreted relative to `worktree_target`.
 ///
 /// All leading dots are stripped from the link name (e.g. `.env` and `..env`
 /// both become `env`). Entries that are empty or that strip to empty are
-/// rejected with an error.
+/// rejected with an error. A nested entry keeps its path below the link dir:
+/// `.claude/skills` links at `<link_dir>/claude/skills`.
 ///
 /// Path validation:
 ///   - `dest` (the link path under symlink_dir/name) is required to remain inside
 ///     the per-worktree link dir (`<symlink_dir_base>/<name>`). Validating against
 ///     the per-worktree subdir (not the top-level base) prevents `strip_leading_dots`
 ///     from producing a dest that escapes the per-worktree subdir while still
-///     normalizing back inside `symlink_dir_base`.
+///     normalizing back inside `symlink_dir_base`. The link goes at the
+///     normalized path, so `x/../env` links at `<link_dir>/env`.
+///   - Missing intermediate directories of a dest are created one level at a
+///     time; an intermediate that is a symlink or not a directory fails the
+///     run, and nothing is created through it.
 ///   - `link_source` is required to remain inside `worktree_target`.
 pub fn create_symlinks(
     worktree_target: &Path,
@@ -52,18 +81,20 @@ pub fn create_symlinks(
 
     for link_source in links {
         let stripped = strip_leading_dots(link_source);
-        let dest = worktree_link_dir.join(stripped);
-        ensure_inside(&worktree_link_dir, &dest).with_context(|| {
-            format!(
-                "validating symlink dest for '{link_source}' under {}",
-                worktree_link_dir.display()
-            )
-        })?;
+        let relative_dest = normalized_relative_dest(&worktree_link_dir, link_source, stripped)?;
 
         let source_abs = worktree_target.join(link_source);
         ensure_inside(worktree_target, Path::new(link_source)).with_context(|| {
             format!("validating symlink source '{link_source}' inside worktree")
         })?;
+
+        let dest = walk_intermediates(
+            &worktree_link_dir,
+            &relative_dest,
+            WalkMode::CreateAbsent,
+            &mut Vec::new(),
+        )
+        .map_err(|stop| anyhow::anyhow!("creating symlink for '{link_source}': {stop}"))?;
 
         #[cfg(unix)]
         std::os::unix::fs::symlink(&source_abs, &dest).with_context(|| {
@@ -77,18 +108,29 @@ pub fn create_symlinks(
     Ok(())
 }
 
-/// Remove symlinks created by `create_symlinks`. Echoes progress to stdout.
-/// Returns the directory we tried to clean up.
+/// Remove what `create_symlinks` made. Echoes progress to stdout. The config
+/// may come from the worktree itself, so teardown never follows a symlink and
+/// deletes only symlinks and empty real directories:
+///
+/// 1. Validate every entry before deleting anything. A link dir that is a
+///    symlink is then unlinked, and nothing is probed through it.
+/// 2. Walk each entry's intermediate components without following symlinks,
+///    and remove the dest only if it is a symlink. An entry whose walk stops
+///    at a symlink or non-directory is left alone and reported on stderr.
+/// 3. Remove the real directories the walks verified, deepest first, when
+///    they are empty.
+/// 4. Remove the link dir with a non-recursive `remove_dir`, which fails when
+///    anything was left in it.
 pub fn remove_symlinks(symlink_dir_base: &Path, name: &str, links: &[String]) -> Result<()> {
     let worktree_link_dir: PathBuf = symlink_dir_base.join(name);
 
-    let dir_exists = worktree_link_dir.exists() || worktree_link_dir.symlink_metadata().is_ok();
-    if !dir_exists {
+    let Ok(link_dir_meta) = std::fs::symlink_metadata(&worktree_link_dir) else {
         return Ok(());
-    }
+    };
 
     println!("Removing symlinks from {}", worktree_link_dir.display());
 
+    let mut planned: Vec<(&str, PathBuf)> = Vec::with_capacity(links.len());
     for link_source in links {
         if link_source.is_empty() {
             anyhow::bail!("symlink_links entry is empty");
@@ -97,17 +139,41 @@ pub fn remove_symlinks(symlink_dir_base: &Path, name: &str, links: &[String]) ->
         if stripped.is_empty() {
             anyhow::bail!("symlink_links entry strips to empty name: '{link_source}'");
         }
-        let candidate = worktree_link_dir.join(stripped);
         // Reject candidates that escape the per-worktree link dir before
         // touching the filesystem. Without this guard a hostile config could
         // drive `remove_file` against an arbitrary symlink outside the
         // configured symlink dir at remove time.
-        ensure_inside(&worktree_link_dir, &candidate).with_context(|| {
-            format!(
-                "validating symlink dest for '{link_source}' under {}",
-                worktree_link_dir.display()
-            )
-        })?;
+        let relative_dest = normalized_relative_dest(&worktree_link_dir, link_source, stripped)?;
+        planned.push((link_source, relative_dest));
+    }
+
+    if link_dir_meta.file_type().is_symlink() {
+        std::fs::remove_file(&worktree_link_dir)
+            .with_context(|| format!("removing symlink {}", worktree_link_dir.display()))?;
+        return Ok(());
+    }
+    if !link_dir_meta.file_type().is_dir() {
+        return Ok(());
+    }
+
+    let mut verified_dirs: Vec<PathBuf> = Vec::new();
+    for (link_source, relative_dest) in &planned {
+        let candidate = match walk_intermediates(
+            &worktree_link_dir,
+            relative_dest,
+            WalkMode::StopAtAbsent,
+            &mut verified_dirs,
+        ) {
+            Ok(candidate) => candidate,
+            Err(IntermediateWalkError::Absent(_)) => continue,
+            Err(stop @ IntermediateWalkError::NotARealDirectory(_)) => {
+                eprintln!("leaving '{link_source}': {stop}");
+                continue;
+            }
+            Err(IntermediateWalkError::Io(io_error)) => {
+                return Err(io_error.context(format!("removing symlink for '{link_source}'")))
+            }
+        };
         println!("Removing {}", candidate.display());
         if is_symlink(&candidate) {
             std::fs::remove_file(&candidate)
@@ -115,15 +181,38 @@ pub fn remove_symlinks(symlink_dir_base: &Path, name: &str, links: &[String]) ->
         }
     }
 
-    if is_symlink(&worktree_link_dir) {
-        std::fs::remove_file(&worktree_link_dir)
-            .with_context(|| format!("removing symlink {}", worktree_link_dir.display()))?;
-    } else if worktree_link_dir.is_dir() {
-        std::fs::remove_dir(&worktree_link_dir)
-            .with_context(|| format!("removing directory {}", worktree_link_dir.display()))?;
+    verified_dirs.sort_by(|left, right| {
+        right
+            .components()
+            .count()
+            .cmp(&left.components().count())
+            .then_with(|| left.cmp(right))
+    });
+    verified_dirs.dedup();
+    for directory in &verified_dirs {
+        if is_empty_real_directory(directory)? {
+            std::fs::remove_dir(directory)
+                .with_context(|| format!("removing directory {}", directory.display()))?;
+        }
     }
 
+    std::fs::remove_dir(&worktree_link_dir)
+        .with_context(|| format!("removing directory {}", worktree_link_dir.display()))?;
+
     Ok(())
+}
+
+/// Whether `directory` is still a real directory (not a symlink) with no
+/// entries. Uses `read_dir` rather than matching `remove_dir`'s
+/// `DirectoryNotEmpty`, which is newer than the crate's MSRV.
+fn is_empty_real_directory(directory: &Path) -> Result<bool> {
+    match std::fs::symlink_metadata(directory) {
+        Ok(meta) if meta.file_type().is_dir() => {}
+        _ => return Ok(false),
+    }
+    let mut entries = std::fs::read_dir(directory)
+        .with_context(|| format!("reading directory {}", directory.display()))?;
+    Ok(entries.next().is_none())
 }
 
 /// One `symlink_links` entry that passed validation: where its link goes,
@@ -140,8 +229,8 @@ struct PlannedLink<'a> {
 ///
 /// 1. Validate everything before writing anything: entry names, lexical
 ///    containment of each dest in `<symlink_dir_base>/<name>` and each source
-///    in `worktree`, no `..` component in the stripped name (so the dest is
-///    the same path `remove_symlinks` deletes), that `symlink_dir_base`
+///    in `worktree`, no `..` component in the stripped name (so an untrusted
+///    name stays a plain downward path), that `symlink_dir_base`
 ///    already exists as a directory (it is never created), and that the per-worktree link dir and the
 ///    worktree do not overlap in either direction once symlinks are resolved.
 /// 2. Apply. The link dir must be absent (created, one level only) or a real
@@ -157,7 +246,6 @@ pub fn relink_symlinks(
     links: &[String],
 ) -> Result<()> {
     let lexical_link_dir = symlink_dir_base.join(name);
-    let normalized_link_dir = ensure_inside(&lexical_link_dir, &lexical_link_dir)?;
 
     let mut planned: Vec<PlannedLink> = Vec::with_capacity(links.len());
     for link_source in links {
@@ -168,13 +256,7 @@ pub fn relink_symlinks(
         if stripped.is_empty() {
             anyhow::bail!("symlink_links entry strips to empty name: '{link_source}'");
         }
-        let normalized_dest = ensure_inside(&lexical_link_dir, &lexical_link_dir.join(stripped))
-            .with_context(|| {
-                format!(
-                    "validating symlink dest for '{link_source}' under {}",
-                    lexical_link_dir.display()
-                )
-            })?;
+        let relative_dest = normalized_relative_dest(&lexical_link_dir, link_source, stripped)?;
         ensure_inside(worktree, Path::new(link_source)).with_context(|| {
             format!("validating symlink source '{link_source}' inside worktree")
         })?;
@@ -183,13 +265,9 @@ pub fn relink_symlinks(
             .any(|component| component == Component::ParentDir)
         {
             anyhow::bail!(
-                "symlink_links entry '{link_source}' contains a '..' component; relink rejects it so the link it makes is the one `remove` tears down"
+                "symlink_links entry '{link_source}' contains a '..' component; relink rejects it to keep an untrusted name a plain downward path"
             );
         }
-        let relative_dest = normalized_dest
-            .strip_prefix(&normalized_link_dir)
-            .map(Path::to_path_buf)
-            .unwrap_or_default();
         planned.push(PlannedLink {
             entry: link_source,
             relative_dest,
@@ -264,9 +342,14 @@ pub fn relink_symlinks(
 /// skipped with nothing written; I/O errors from the write itself are
 /// reported the same way.
 fn relink_one(link_dir: &Path, link: &PlannedLink) -> Result<()> {
-    let dest = match walk_intermediates(link_dir, &link.relative_dest) {
+    let dest = match walk_intermediates(
+        link_dir,
+        &link.relative_dest,
+        WalkMode::StopAtAbsent,
+        &mut Vec::new(),
+    ) {
         Ok(dest) => dest,
-        Err(IntermediateWalkError::Probe(probe_error)) => return Err(probe_error),
+        Err(IntermediateWalkError::Io(io_error)) => return Err(io_error),
         Err(stop) => {
             anyhow::bail!("{stop}; relink creates no intermediate directories")
         }
@@ -309,8 +392,9 @@ enum IntermediateWalkError {
     NotARealDirectory(PathBuf),
     /// An intermediate does not exist.
     Absent(PathBuf),
-    /// Probing an intermediate failed for a reason other than its absence.
-    Probe(anyhow::Error),
+    /// Probing an intermediate failed for a reason other than its absence,
+    /// or creating an absent one failed.
+    Io(anyhow::Error),
 }
 
 impl std::fmt::Display for IntermediateWalkError {
@@ -324,19 +408,33 @@ impl std::fmt::Display for IntermediateWalkError {
                 )
             }
             Self::Absent(path) => write!(formatter, "{} does not exist", path.display()),
-            Self::Probe(probe_error) => write!(formatter, "{probe_error:#}"),
+            Self::Io(io_error) => write!(formatter, "{io_error:#}"),
         }
     }
 }
 
+/// What [`walk_intermediates`] does at an absent intermediate.
+#[derive(Clone, Copy)]
+enum WalkMode {
+    /// Create it with a single-level `create_dir` and carry on.
+    CreateAbsent,
+    /// Stop with [`IntermediateWalkError::Absent`], having written nothing.
+    StopAtAbsent,
+}
+
 /// Walk every component of `relative_dest` except the last, starting at
 /// `link_dir`, and return the full dest path once each of them has been
-/// verified as a real directory. Uses `symlink_metadata` only, so no symlink
-/// is ever followed; the walk stops at the first intermediate that is a
-/// symlink, a non-directory, or absent.
+/// verified (or, in [`WalkMode::CreateAbsent`], created) as a real directory.
+/// Uses `symlink_metadata` only, so no symlink is ever followed; the walk
+/// stops at the first intermediate that is a symlink or a non-directory, and
+/// at an absent one unless creating it. Every real directory verified or
+/// created is appended to `verified_dirs`, shallowest first, including on a
+/// stop.
 fn walk_intermediates(
     link_dir: &Path,
     relative_dest: &Path,
+    mode: WalkMode,
+    verified_dirs: &mut Vec<PathBuf>,
 ) -> std::result::Result<PathBuf, IntermediateWalkError> {
     let mut dest = link_dir.to_path_buf();
     let mut components = relative_dest.components().peekable();
@@ -348,16 +446,25 @@ fn walk_intermediates(
         match std::fs::symlink_metadata(&dest) {
             Ok(meta) if meta.file_type().is_dir() => {}
             Ok(_) => return Err(IntermediateWalkError::NotARealDirectory(dest)),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                return Err(IntermediateWalkError::Absent(dest))
-            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => match mode {
+                WalkMode::StopAtAbsent => return Err(IntermediateWalkError::Absent(dest)),
+                WalkMode::CreateAbsent => {
+                    if let Err(e) = std::fs::create_dir(&dest) {
+                        let context = format!("creating directory {}", dest.display());
+                        return Err(IntermediateWalkError::Io(
+                            anyhow::Error::new(e).context(context),
+                        ));
+                    }
+                }
+            },
             Err(e) => {
                 let context = format!("probing {}", dest.display());
-                return Err(IntermediateWalkError::Probe(
+                return Err(IntermediateWalkError::Io(
                     anyhow::Error::new(e).context(context),
                 ));
             }
         }
+        verified_dirs.push(dest.clone());
     }
     Ok(dest)
 }
@@ -654,6 +761,69 @@ mod tests {
             std::fs::read_link(fx.worktree.join("env")).unwrap(),
             fx.outside.join("x")
         );
+    }
+
+    fn to_links(entries: &[&str]) -> Vec<String> {
+        entries.iter().map(|entry| entry.to_string()).collect()
+    }
+
+    #[test]
+    fn create_symlinks_creates_nested_parents() {
+        let fx = RelinkFixture::new();
+        create_symlinks(
+            &fx.worktree,
+            &fx.base,
+            "wt",
+            &to_links(&[".claude/skills", "a/b/c"]),
+        )
+        .unwrap();
+        for nested_dir in ["claude", "a", "a/b"] {
+            let meta = std::fs::symlink_metadata(fx.link_dir().join(nested_dir)).unwrap();
+            assert!(meta.file_type().is_dir(), "{nested_dir} is not a real dir");
+        }
+        assert_eq!(
+            std::fs::read_link(fx.link_dir().join("claude/skills")).unwrap(),
+            fx.worktree.join(".claude/skills")
+        );
+        assert_eq!(
+            std::fs::read_link(fx.link_dir().join("a/b/c")).unwrap(),
+            fx.worktree.join("a/b/c")
+        );
+    }
+
+    #[test]
+    fn create_symlinks_does_not_resolve_dotdot_through_symlinked_component() {
+        let fx = RelinkFixture::new();
+        std::fs::create_dir(fx.outside.join("sub")).unwrap();
+        std::fs::create_dir(fx.link_dir()).unwrap();
+        symlink(fx.outside.join("sub"), fx.link_dir().join("a")).unwrap();
+        create_symlinks(&fx.worktree, &fx.base, "wt", &to_links(&["a/../env"])).unwrap();
+        assert!(std::fs::symlink_metadata(fx.outside.join("env")).is_err());
+        assert_eq!(
+            std::fs::read_link(fx.link_dir().join("env")).unwrap(),
+            fx.worktree.join("a/../env")
+        );
+    }
+
+    #[test]
+    fn remove_symlinks_does_not_descend_through_symlinked_link_dir() {
+        let fx = RelinkFixture::new();
+        symlink(fx.worktree.join(".env"), fx.outside.join("env")).unwrap();
+        symlink(&fx.outside, fx.link_dir()).unwrap();
+        remove_symlinks(&fx.base, "wt", &to_links(&[".env"])).unwrap();
+        assert!(is_symlink(&fx.outside.join("env")));
+        assert!(std::fs::symlink_metadata(fx.link_dir()).is_err());
+    }
+
+    #[test]
+    fn remove_symlinks_does_not_resolve_dotdot_through_symlinked_component() {
+        let fx = RelinkFixture::new();
+        std::fs::create_dir(fx.outside.join("sub")).unwrap();
+        symlink(fx.worktree.join(".env"), fx.outside.join("env")).unwrap();
+        std::fs::create_dir(fx.link_dir()).unwrap();
+        symlink(fx.outside.join("sub"), fx.link_dir().join("a")).unwrap();
+        let _ = remove_symlinks(&fx.base, "wt", &to_links(&["a/../env"]));
+        assert!(is_symlink(&fx.outside.join("env")));
     }
 
     fn worktree_dir_placeholder() -> std::path::PathBuf {

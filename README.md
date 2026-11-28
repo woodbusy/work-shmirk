@@ -108,6 +108,9 @@ supported, and work-shmirk errors when it finds one; move its contents into
   // `relink`. All leading dots are stripped from the
   // link name: ".env" → "env", "..env" → "env". Entries that are empty or
   // that strip to empty ("..", "...", etc.) are rejected with an error.
+  // A nested entry keeps its path below the link directory: ".claude/skills"
+  // → <symlink_dir>/<worktree-name>/claude/skills. `new` creates the missing
+  // directories, and `remove` removes them once they are empty.
   "symlink_links": [".claude/skills"],
 
   // Tmux integration.
