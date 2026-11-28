@@ -214,3 +214,21 @@ fn remove_leaves_regular_file_at_dest() {
     assert_eq!(fs::read_to_string(&dest).unwrap(), "mine");
     assert!(wt.is_dir(), "worktree must be left intact");
 }
+
+#[test]
+fn remove_reports_non_directory_link_dir() {
+    let env = TestEnv::new();
+    let (wt, link_dir, _base) = setup_without_links(&env);
+    fs::remove_dir(&link_dir).unwrap();
+    fs::write(&link_dir, "mine").unwrap();
+    std::process::Command::new("git")
+        .args(["clean", "-fdx"])
+        .current_dir(&wt)
+        .status()
+        .unwrap();
+
+    let outcome = env.bin().args(["remove", WORKTREE]).assert().success();
+
+    assert_eq!(fs::read_to_string(&link_dir).unwrap(), "mine");
+    outcome.stderr(contains("not a directory or symlink"));
+}
