@@ -234,11 +234,12 @@ struct PlannedLink<'a> {
 ///    already exists as a directory (it is never created), and that the per-worktree link dir and the
 ///    worktree do not overlap in either direction once symlinks are resolved.
 /// 2. Apply. The link dir must be absent (created, one level only) or a real
-///    directory; a symlink or non-directory there aborts the run. Every
-///    intermediate component of a dest must already be a real directory, and
-///    only an absent dest or a symlink dest is written. Other obstructions
-///    skip that entry, are reported on stderr, and make the run fail after
-///    the remaining entries are linked.
+///    directory; a symlink or non-directory there aborts the run. Each
+///    intermediate component of a dest must be a real directory; an absent
+///    one is created with a single-level `create_dir`, while a symlink or
+///    non-directory skips the entry. Only an absent dest or a symlink dest is
+///    written. Other obstructions skip that entry, are reported on stderr,
+///    and make the run fail after the remaining entries are linked.
 pub fn relink_symlinks(
     worktree: &Path,
     symlink_dir_base: &Path,
@@ -338,21 +339,23 @@ pub fn relink_symlinks(
     Ok(())
 }
 
-/// Link one validated entry under `link_dir`. An `Err` means the entry was
-/// skipped with nothing written; I/O errors from the write itself are
-/// reported the same way.
+/// Link one validated entry under `link_dir`, creating any absent
+/// intermediate directory one level at a time, and only below components
+/// verified to be real directories. An `Err` means the entry was skipped with
+/// nothing written through a symlink or a non-directory; intermediates
+/// already created for it stay behind as empty real directories, which
+/// `remove` tears down. I/O errors from the write itself are reported the
+/// same way.
 fn relink_one(link_dir: &Path, link: &PlannedLink) -> Result<()> {
     let dest = match walk_intermediates(
         link_dir,
         &link.relative_dest,
-        WalkMode::StopAtAbsent,
+        WalkMode::CreateAbsent,
         &mut Vec::new(),
     ) {
         Ok(dest) => dest,
         Err(IntermediateWalkError::Io(io_error)) => return Err(io_error),
-        Err(stop) => {
-            anyhow::bail!("{stop}; relink creates no intermediate directories")
-        }
+        Err(stop) => anyhow::bail!("{stop}"),
     };
 
     match std::fs::symlink_metadata(&dest) {
@@ -673,14 +676,20 @@ mod tests {
     }
 
     #[test]
-    fn relink_skips_absent_intermediate_component() {
+    fn relink_creates_absent_intermediate_directories() {
         let fx = RelinkFixture::new();
-        let err = fx.relink(&["sub/file"]).unwrap_err();
-        assert!(
-            err.to_string().contains("sub/file"),
-            "unexpected error: {err}"
+        fx.relink(&["sub/deeper/file"]).unwrap();
+        for directory in ["sub", "sub/deeper"] {
+            let meta = std::fs::symlink_metadata(fx.link_dir().join(directory)).unwrap();
+            assert!(
+                meta.file_type().is_dir(),
+                "{directory} should be a real dir"
+            );
+        }
+        assert_eq!(
+            std::fs::read_link(fx.link_dir().join("sub/deeper/file")).unwrap(),
+            fx.worktree.join("sub/deeper/file")
         );
-        assert!(!fx.link_dir().join("sub").exists());
     }
 
     #[test]
