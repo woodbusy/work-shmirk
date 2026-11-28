@@ -153,6 +153,10 @@ pub fn remove_symlinks(symlink_dir_base: &Path, name: &str, links: &[String]) ->
         return Ok(());
     }
     if !link_dir_meta.file_type().is_dir() {
+        eprintln!(
+            "leaving {}: not a directory or symlink",
+            worktree_link_dir.display()
+        );
         return Ok(());
     }
 
@@ -831,8 +835,27 @@ mod tests {
         symlink(fx.worktree.join(".env"), fx.outside.join("env")).unwrap();
         std::fs::create_dir(fx.link_dir()).unwrap();
         symlink(fx.outside.join("sub"), fx.link_dir().join("a")).unwrap();
-        let _ = remove_symlinks(&fx.base, "wt", &to_links(&["a/../env"]));
+        // `a/../env` normalizes lexically to `env`, which is absent from the
+        // link dir, so nothing is removed; the unconfigured `a` symlink then
+        // keeps the link dir non-empty and the final `remove_dir` fails.
+        let err = remove_symlinks(&fx.base, "wt", &to_links(&["a/../env"])).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("removing directory"),
+            "unexpected error: {err:#}"
+        );
         assert!(is_symlink(&fx.outside.join("env")));
+        assert_eq!(
+            std::fs::read_link(fx.link_dir().join("a")).unwrap(),
+            fx.outside.join("sub")
+        );
+    }
+
+    #[test]
+    fn remove_symlinks_leaves_non_directory_link_dir() {
+        let fx = RelinkFixture::new();
+        std::fs::write(fx.link_dir(), "not a dir").unwrap();
+        remove_symlinks(&fx.base, "wt", &to_links(&[".env"])).unwrap();
+        assert_eq!(std::fs::read_to_string(fx.link_dir()).unwrap(), "not a dir");
     }
 
     fn worktree_dir_placeholder() -> std::path::PathBuf {
